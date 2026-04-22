@@ -531,6 +531,16 @@ button[type="submit"].btn-loading::after{border-top-color:#04101e}
 }
 .btn-complete:hover{box-shadow:0 4px 22px rgba(0,210,255,.38)!important}
 
+/* === SECONDARY ACTION BUTTON (ex: Salvar como Encomenda) === */
+#save-as-order{
+  display:block;width:100%;padding:13px;margin:8px 0 0;
+  background:transparent;
+  color:var(--muted);
+  border:1px solid rgba(255,255,255,.1);
+  border-radius:var(--r);font-size:14px;font-weight:600;
+}
+#save-as-order:hover{border-color:rgba(255,255,255,.22);color:var(--text);background:rgba(255,255,255,.04)}
+
 /* nav: keep labels from overflowing on very small screens */
 @media(max-width:390px){
   .app-nav button{font-size:8px;padding:6px 1px 5px}

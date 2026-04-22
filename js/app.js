@@ -540,11 +540,49 @@ document.getElementById("sale-form").addEventListener("submit", async function(e
   }
 
   e.target.reset();
-  usageItems.innerHTML = "";
+  usageItems.innerHTML = ""; addUsageRow();
   hideLoading();
   btnUnload(submitBtn);
   alert("Venda registrada!");
 });
+
+document.getElementById("save-as-order").onclick = async function() {
+  var btn = this;
+  var fd = new FormData(document.getElementById("sale-form"));
+  var product_name = fd.get("product_name");
+  var price = parseFloat(fd.get("price")) || 0;
+  var notes = fd.get("notes") || "";
+  if (!product_name) { alert("Preencha o nome do produto."); return; }
+  var usageList = [];
+  usageItems.querySelectorAll("div").forEach(function(r) {
+    var s = r.querySelector("select"); var q = r.querySelector("input");
+    if (s && s.value && q && q.value) usageList.push({ filament_id: s.value, qty_needed: parseFloat(q.value) || 0 });
+  });
+  if (!usageList.length) { alert("Selecione pelo menos um filamento."); return; }
+  btnLoad(btn); showLoading(); await yieldUI();
+  if (sb) {
+    var ins = await sb.from("orders").insert({ product_name: product_name, price: price, notes: notes, status: "pendente", created_at: new Date().toISOString() }).select().single();
+    if (ins.error) { showError("Erro ao criar encomenda.", ins.error); hideLoading(); btnUnload(btn); return; }
+    var orderId = ins.data.id;
+    for (var i = 0; i < usageList.length; i++) {
+      await sb.from("order_items").insert({ order_id: orderId, filament_id: usageList[i].filament_id, qty_needed: usageList[i].qty_needed });
+    }
+    await fetchOrders(); await fetchOrderItems();
+  } else {
+    var order = { id: "local-" + Date.now(), product_name: product_name, price: price, notes: notes, status: "pendente", created_at: new Date().toISOString() };
+    localDB.orders.push(order);
+    usageList.forEach(function(u) { localDB.order_items.push({ order_id: order.id, filament_id: u.filament_id, qty_needed: u.qty_needed }); });
+    localDB.save();
+  }
+  document.getElementById("sale-form").reset();
+  usageItems.innerHTML = ""; addUsageRow();
+  hideLoading(); btnUnload(btn);
+  appNav.querySelectorAll("button[data-sec]").forEach(function(b) { b.classList.remove("active"); });
+  var ob = appNav ? appNav.querySelector("[data-sec='sec-orders']") : null; if (ob) ob.classList.add("active");
+  renderOrders();
+  showSection("sec-orders");
+  alert("Encomenda criada!");
+};
 
 // -- Sales list render -----------------------------------------------------
 function renderSales() {
@@ -661,6 +699,22 @@ function renderProducts() {
       hideLoading();
     };
 
+    var encomendar = document.createElement("button"); encomendar.textContent = "Encomendar";
+    encomendar.onclick = async function() {
+      btnLoad(encomendar); showLoading(); await yieldUI();
+      await fetchFilaments(); await fetchOrders(); await fetchOrderItems();
+      appNav.querySelectorAll("button[data-sec]").forEach(function(b) { b.classList.remove("active"); });
+      var ob = appNav ? appNav.querySelector("[data-sec='sec-orders']") : null; if (ob) ob.classList.add("active");
+      prepOrderForm();
+      renderOrders();
+      showSection("sec-orders");
+      var pnEl = document.querySelector("#order-form [name='product_name']");
+      var prEl = document.querySelector("#order-form [name='price']");
+      if (pnEl) pnEl.value = pCopy.name;
+      if (prEl) prEl.value = pCopy.price || "";
+      hideLoading();
+    };
+
     var editBtn = document.createElement("button"); editBtn.textContent = "Editar preco";
     editBtn.onclick = async function() {
       var val = prompt("Novo preco:", String(pCopy.price || 0)); if (val === null) return;
@@ -687,7 +741,7 @@ function renderProducts() {
       }
     };
 
-    acts.appendChild(venderBtn); acts.appendChild(editBtn); acts.appendChild(delBtn);
+    acts.appendChild(venderBtn); acts.appendChild(encomendar); acts.appendChild(editBtn); acts.appendChild(delBtn);
     d.appendChild(img); d.appendChild(info); d.appendChild(acts);
     el.appendChild(d);
   });

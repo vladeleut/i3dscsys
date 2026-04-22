@@ -53,3 +53,22 @@ create table if not exists order_items (
   filament_id uuid references filaments(id) on delete set null,
   qty_needed numeric not null default 0
 );
+
+-- RLS: habilitar e liberar acesso para usuários autenticados
+alter table orders      enable row level security;
+alter table order_items enable row level security;
+
+drop policy if exists "orders_auth"      on orders;
+drop policy if exists "order_items_auth" on order_items;
+
+create policy "orders_auth"
+  on orders for all
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "order_items_auth"
+  on order_items for all
+  to authenticated
+  using (true)
+  with check (true);
