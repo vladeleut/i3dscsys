@@ -13,15 +13,19 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY) {
 
 // -- Local fallback ----------------------------------------------------------
 const localDB = {
-  filaments:  JSON.parse(localStorage.getItem("filaments")  || "[]"),
-  sales:      JSON.parse(localStorage.getItem("sales")      || "[]"),
-  products:   JSON.parse(localStorage.getItem("products")   || "[]"),
-  sale_items: JSON.parse(localStorage.getItem("sale_items") || "[]"),
+  filaments:   JSON.parse(localStorage.getItem("filaments")   || "[]"),
+  sales:       JSON.parse(localStorage.getItem("sales")       || "[]"),
+  products:    JSON.parse(localStorage.getItem("products")    || "[]"),
+  sale_items:  JSON.parse(localStorage.getItem("sale_items")  || "[]"),
+  orders:      JSON.parse(localStorage.getItem("orders")      || "[]"),
+  order_items: JSON.parse(localStorage.getItem("order_items") || "[]"),
   save() {
-    localStorage.setItem("filaments",  JSON.stringify(this.filaments));
-    localStorage.setItem("sales",      JSON.stringify(this.sales));
-    localStorage.setItem("products",   JSON.stringify(this.products));
-    localStorage.setItem("sale_items", JSON.stringify(this.sale_items));
+    localStorage.setItem("filaments",   JSON.stringify(this.filaments));
+    localStorage.setItem("sales",       JSON.stringify(this.sales));
+    localStorage.setItem("products",    JSON.stringify(this.products));
+    localStorage.setItem("sale_items",  JSON.stringify(this.sale_items));
+    localStorage.setItem("orders",      JSON.stringify(this.orders));
+    localStorage.setItem("order_items", JSON.stringify(this.order_items));
   }
 };
 
@@ -43,7 +47,8 @@ const ALL_SECTIONS = [
   "sec-filaments-list",
   "sec-sales-register",
   "sec-sales-list",
-  "sec-products"
+  "sec-products",
+  "sec-orders"
 ];
 
 function showSection(id) {
@@ -157,6 +162,12 @@ if (appNav) {
       } else if (secId === "sec-products") {
         await fetchProducts();
         renderProducts();
+      } else if (secId === "sec-orders") {
+        await fetchFilaments();
+        await fetchOrders();
+        await fetchOrderItems();
+        prepOrderForm();
+        renderOrders();
       }
       hideLoading();
       showSection(secId);
@@ -189,8 +200,20 @@ async function fetchSaleItems() {
   if (!error && data) { localDB.sale_items = data; localDB.save(); }
 }
 
+async function fetchOrders() {
+  if (!sb) return;
+  const { data, error } = await sb.from("orders").select("*");
+  if (!error && data) { localDB.orders = data; localDB.save(); }
+}
+
+async function fetchOrderItems() {
+  if (!sb) return;
+  const { data, error } = await sb.from("order_items").select("*");
+  if (!error && data) { localDB.order_items = data; localDB.save(); }
+}
+
 async function refreshAll() {
-  await Promise.all([fetchFilaments(), fetchSales(), fetchProducts(), fetchSaleItems()]);
+  await Promise.all([fetchFilaments(), fetchSales(), fetchProducts(), fetchSaleItems(), fetchOrders(), fetchOrderItems()]);
 }
 
 // -- Helpers ------------------------------------------------------------------
@@ -198,8 +221,31 @@ function toBase64(file) {
   return new Promise(function(res, rej) { var r = new FileReader(); r.onload = function() { res(r.result); }; r.onerror = rej; r.readAsDataURL(file); });
 }
 
+async function uploadFiles(files, bucket) {
+  if (!files || !files.length) return null;
+  var paths = [];
+  for (var i = 0; i < files.length; i++) {
+    var file = files[i];
+    if (!file || !file.size) continue;
+    if (sb) {
+      var uuid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + "-" + i + "-" + Math.random().toString(36).slice(2));
+      var fn = uuid + "-" + file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+      var up = await sb.storage.from(bucket).upload(fn, file, { cacheControl: "3600", upsert: true });
+      if (!up.error) { paths.push(fn); }
+      else { console.warn("Upload falhou (" + bucket + "):", up.error.message); paths.push(await toBase64(file)); }
+    } else {
+      paths.push(await toBase64(file));
+    }
+  }
+  if (!paths.length) return null;
+  return paths.length === 1 ? paths[0] : JSON.stringify(paths);
+}
+
 async function resolvePhotoUrl(photo, bucket) {
   if (!bucket) bucket = "filament-photos";
+  if (!photo || typeof photo !== "string") return null;
+  // JSON array — take first element
+  if (photo.startsWith("[")) { try { photo = JSON.parse(photo)[0]; } catch(_) {} }
   if (!photo || typeof photo !== "string") return null;
   if (photo.startsWith("data:") || photo.startsWith("http")) return photo;
   if (!sb) return null;
@@ -212,6 +258,20 @@ async function resolvePhotoUrl(photo, bucket) {
     if (data && data.publicUrl) return data.publicUrl;
   } catch (_) {}
   return null;
+}
+
+async function resolveAllPhotoUrls(photo, bucket) {
+  if (!bucket) bucket = "filament-photos";
+  if (!photo || typeof photo !== "string") return [];
+  var paths;
+  if (photo.startsWith("[")) { try { paths = JSON.parse(photo); } catch(_) { paths = [photo]; } }
+  else { paths = [photo]; }
+  var urls = [];
+  for (var i = 0; i < paths.length; i++) {
+    var u = await resolvePhotoUrl(paths[i], bucket);
+    if (u) urls.push(u);
+  }
+  return urls;
 }
 
 function showError(msg, err) {
@@ -238,6 +298,48 @@ function btnUnload(btn) {
 function yieldUI() { return new Promise(function(r) { requestAnimationFrame(r); }); }
 var BLANK = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
+// -- Lightbox -------------------------------------------------------------
+var _lbUrls = []; var _lbIdx = 0;
+function openLightbox(urls, startIdx) {
+  _lbUrls = Array.isArray(urls) ? urls : [urls];
+  _lbIdx = startIdx || 0;
+  _lbShow();
+}
+function _lbShow() {
+  var lb = document.getElementById("lightbox");
+  var img = document.getElementById("lightbox-img");
+  var dots = document.getElementById("lightbox-dots");
+  var prev = document.getElementById("lightbox-prev");
+  var next = document.getElementById("lightbox-next");
+  if (!lb) return;
+  img.src = _lbUrls[_lbIdx] || "";
+  lb.classList.remove("hidden");
+  prev.classList.toggle("hidden", _lbUrls.length < 2);
+  next.classList.toggle("hidden", _lbUrls.length < 2);
+  dots.innerHTML = "";
+  if (_lbUrls.length > 1) {
+    _lbUrls.forEach(function(_, i) {
+      var s = document.createElement("span"); if (i === _lbIdx) s.className = "active";
+      s.onclick = function() { _lbIdx = i; _lbShow(); };
+      dots.appendChild(s);
+    });
+  }
+}
+function closeLightbox() { var lb = document.getElementById("lightbox"); if (lb) lb.classList.add("hidden"); }
+(function() {
+  document.getElementById("lightbox-backdrop").onclick = closeLightbox;
+  document.getElementById("lightbox-close").onclick = closeLightbox;
+  document.getElementById("lightbox-prev").onclick = function() { _lbIdx = (_lbIdx - 1 + _lbUrls.length) % _lbUrls.length; _lbShow(); };
+  document.getElementById("lightbox-next").onclick = function() { _lbIdx = (_lbIdx + 1) % _lbUrls.length; _lbShow(); };
+  document.addEventListener("keydown", function(e) {
+    var lb = document.getElementById("lightbox");
+    if (!lb || lb.classList.contains("hidden")) return;
+    if (e.key === "Escape") closeLightbox();
+    if (e.key === "ArrowLeft") { _lbIdx = (_lbIdx - 1 + _lbUrls.length) % _lbUrls.length; _lbShow(); }
+    if (e.key === "ArrowRight") { _lbIdx = (_lbIdx + 1) % _lbUrls.length; _lbShow(); }
+  });
+})();
+
 // -- Filaments list render -------------------------------------------------
 function renderFilamentsList() {
   var el = document.getElementById("filaments-list");
@@ -246,19 +348,30 @@ function renderFilamentsList() {
   var rows = localDB.filaments.filter(function(f) { var k = f.id || f.name; if (seen.has(k)) return false; seen.add(k); return true; });
   rows.forEach(function(f) {
     var div = document.createElement("div"); div.className = "item";
-    var img = document.createElement("img"); img.alt = ""; img.src = BLANK;
-    resolvePhotoUrl(f.photo, "filament-photos").then(function(u) { if (u) img.src = u; }).catch(function() {});
+    var img = document.createElement("img"); img.alt = ""; img.src = BLANK; img.style.cursor = "pointer";
+    var fPhoto = f.photo; var fBucket = "filament-photos";
+    resolvePhotoUrl(fPhoto, fBucket).then(function(u) {
+      if (u) { img.src = u; img.onclick = function() { resolveAllPhotoUrls(fPhoto, fBucket).then(function(urls) { openLightbox(urls, 0); }); }; }
+    }).catch(function() {});
     var info = document.createElement("div"); info.className = "item-info";
-    info.innerHTML = "<strong>" + f.name + "</strong><div class='muted'>" + f.color + " � " + f.manufacturer + "</div>";
+    info.innerHTML = "<strong>" + f.name + "</strong><div class='muted'>" + f.color + " — " + f.manufacturer + "</div>";
     var acts = document.createElement("div"); acts.className = "item-actions";
-    var badge = document.createElement("span"); badge.className = "qty-badge"; badge.textContent = (f.quantity || 0) + " g";
+    var badge = document.createElement("span"); badge.className = "qty-badge"; badge.id = "badge-" + (f.id || f.name); badge.textContent = (f.quantity || 0) + " g";
+    var refillBtn = document.createElement("button"); refillBtn.textContent = "+1kg"; refillBtn.title = "Adicionar 1000g ao estoque";
+    refillBtn.style.cssText = "padding:6px 10px;font-size:12px";
+    var fCopy2 = f;
+    refillBtn.onclick = async function() {
+      btnLoad(refillBtn);
+      await addFilamentStock(fCopy2.id, fCopy2.name, 1000);
+      btnUnload(refillBtn);
+    };
     var delBtn = document.createElement("button"); delBtn.innerHTML = trashIcon(); delBtn.title = "Remover filamento";
     var fCopy = f;
     delBtn.onclick = async function() {
       if (!confirm("Confirma exclusão do filamento \"" + fCopy.name + "\"?")) return;
       await deleteFilament(fCopy.id, fCopy.name);
     };
-    acts.appendChild(badge); acts.appendChild(delBtn);
+    acts.appendChild(badge); acts.appendChild(refillBtn); acts.appendChild(delBtn);
     div.appendChild(img); div.appendChild(info); div.appendChild(acts);
     el.appendChild(div);
   });
@@ -273,17 +386,10 @@ document.getElementById("filament-form").addEventListener("submit", async functi
   await yieldUI();
   var fd = new FormData(e.target);
   var obj = { name: fd.get("name"), color: fd.get("color"), manufacturer: fd.get("manufacturer"), quantity: parseFloat(fd.get("quantity")) || 0, photo: null };
-  var file = e.target.photo.files[0];
-  if (file) {
-    if (sb) {
-      var uuid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(36).slice(2));
-      var filename = uuid + "-" + file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
-      var upRes = await sb.storage.from("filament-photos").upload(filename, file, { cacheControl: "3600", upsert: false });
-      if (upRes.error) { console.warn("Upload falhou:", upRes.error.message); obj.photo = await toBase64(file); }
-      else { obj.photo = filename; }
-    } else {
-      obj.photo = await toBase64(file);
-    }
+  var file = e.target.photo.files;
+  if (file && file.length) {
+    var photoVal = await uploadFiles(file, "filament-photos");
+    if (photoVal) obj.photo = photoVal;
   }
   if (sb) {
     var { error } = await sb.from("filaments").insert(obj);
@@ -297,6 +403,19 @@ document.getElementById("filament-form").addEventListener("submit", async functi
   btnUnload(submitBtn);
   alert("Filamento salvo!");
 });
+
+async function addFilamentStock(id, name, grams) {
+  var fil = localDB.filaments.find(function(f) { return f.id === id || f.name === name; });
+  if (!fil) return;
+  var newQty = (parseFloat(fil.quantity) || 0) + grams;
+  if (sb && id) {
+    var { error } = await sb.from("filaments").update({ quantity: newQty }).eq("id", id);
+    if (error) { showError("Erro ao atualizar estoque.", error); return; }
+  }
+  fil.quantity = newQty; localDB.save();
+  var badge = document.getElementById("badge-" + (id || name));
+  if (badge) badge.textContent = newQty + " g";
+}
 
 async function deleteFilament(id, name) {
   showLoading();
@@ -385,13 +504,10 @@ document.getElementById("sale-form").addEventListener("submit", async function(e
       } else { showError("Erro ao inserir venda.", ins.error); hideLoading(); btnUnload(submitBtn); return; }
     } else { saleData = ins.data; }
 
-    var productFile = fd.get("product_photo");
+    var productFile = e.target.product_photo.files;
     var productPhoto = null;
-    if (productFile && productFile.size) {
-      var uuid2 = (crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now();
-      var fn = uuid2 + "-" + productFile.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
-      var upRes2 = await sb.storage.from("product-photos").upload(fn, productFile, { cacheControl: "3600", upsert: false });
-      if (!upRes2.error) productPhoto = fn; else console.warn("Product photo upload failed:", upRes2.error.message);
+    if (productFile && productFile.length) {
+      productPhoto = await uploadFiles(productFile, "product-photos");
     }
 
     for (var i = 0; i < usages.length; i++) {
@@ -442,9 +558,12 @@ function renderSales() {
     rows.forEach(function(s) {
       var d = document.createElement("div"); d.className = "item";
       var prod = localDB.products.find(function(p) { return p.name === s.product_name; });
-      var img = document.createElement("img"); img.alt = ""; img.src = BLANK;
-      if (prod && prod.photo) {
-        resolvePhotoUrl(prod.photo, "product-photos").then(function(u) { if (u) img.src = u; }).catch(function() {});
+      var img = document.createElement("img"); img.alt = ""; img.src = BLANK; img.style.cursor = "pointer";
+      var sPhoto = prod ? prod.photo : null; var sBucket = "product-photos";
+      if (sPhoto) {
+        resolvePhotoUrl(sPhoto, sBucket).then(function(u) {
+          if (u) { img.src = u; img.onclick = function() { resolveAllPhotoUrls(sPhoto, sBucket).then(function(urls) { openLightbox(urls, 0); }); }; }
+        }).catch(function() {});
       }
       d.appendChild(img);
       var info = document.createElement("div"); info.className = "item-info";
@@ -520,8 +639,11 @@ function renderProducts() {
   var el = document.getElementById("products-list"); el.innerHTML = "";
   localDB.products.forEach(function(p) {
     var d = document.createElement("div"); d.className = "item";
-    var img = document.createElement("img"); img.alt = ""; img.src = BLANK;
-    resolvePhotoUrl(p.photo, "product-photos").then(function(u) { if (u) img.src = u; }).catch(function() {});
+    var img = document.createElement("img"); img.alt = ""; img.src = BLANK; img.style.cursor = "pointer";
+    var pPhoto = p.photo; var pBucket = "product-photos";
+    resolvePhotoUrl(pPhoto, pBucket).then(function(u) {
+      if (u) { img.src = u; img.onclick = function() { resolveAllPhotoUrls(pPhoto, pBucket).then(function(urls) { openLightbox(urls, 0); }); }; }
+    }).catch(function() {});
     var info = document.createElement("div"); info.className = "item-info";
     info.innerHTML = "<strong>" + p.name + "</strong><div class='muted'>R$ " + parseFloat(p.price || 0).toFixed(2) + "</div>";
     var acts = document.createElement("div"); acts.className = "item-actions";
@@ -613,6 +735,216 @@ function renderDashboard() {
     d.innerHTML = "<span class='recent-name'>" + s.product_name + "</span><span class='recent-price'>" + fmtMoney(parseFloat(s.price) || 0) + "</span>";
     recentEl.appendChild(d);
   });
+}
+
+// -- Orders (Encomendas) ---------------------------------------------------
+function prepOrderForm() {
+  var el = document.getElementById("order-usage-items");
+  if (!el) return;
+  el.innerHTML = "";
+  addOrderUsageRow();
+}
+
+function addOrderUsageRow() {
+  var container = document.getElementById("order-usage-items");
+  var row = document.createElement("div"); row.className = "usage-row";
+  var sel = document.createElement("select"); sel.name = "filament_id"; sel.style.flex = "1";
+  var qty = document.createElement("input"); qty.name = "qty"; qty.type = "number"; qty.step = "0.1"; qty.placeholder = "g necess\u00e1rios"; qty.style.width = "110px";
+  var delBtn = document.createElement("button"); delBtn.type = "button"; delBtn.innerHTML = trashIcon();
+  delBtn.onclick = function() { row.remove(); updateOrderDelVisibility(); };
+  var placeholder = document.createElement("option"); placeholder.value = ""; placeholder.text = "Escolha filamento";
+  sel.appendChild(placeholder);
+  var seen = new Set();
+  localDB.filaments.forEach(function(f, i) {
+    var key = f.id || f.name || String(i);
+    if (seen.has(key)) return; seen.add(key);
+    var o = document.createElement("option");
+    o.value = f.id || String(i);
+    o.text = f.name + " \u2014 " + (f.color || "?") + " (" + (f.quantity || 0) + "g)";
+    sel.appendChild(o);
+  });
+  sel.addEventListener("change", function() {
+    if (sel.value && container.lastElementChild === row) addOrderUsageRow();
+    updateOrderDelVisibility();
+  });
+  row.appendChild(sel); row.appendChild(qty); row.appendChild(delBtn);
+  container.appendChild(row);
+  updateOrderDelVisibility();
+}
+
+function updateOrderDelVisibility() {
+  var rows = document.getElementById("order-usage-items").querySelectorAll("div");
+  rows.forEach(function(r) { var b = r.querySelector("button"); if (b) b.style.display = rows.length > 1 ? "inline-block" : "none"; });
+}
+
+document.getElementById("order-form").addEventListener("submit", async function(e) {
+  e.preventDefault();
+  var submitBtn = e.target.querySelector("[type='submit']");
+  btnLoad(submitBtn); showLoading(); await yieldUI();
+  var fd = new FormData(e.target);
+  var product_name = fd.get("product_name");
+  var price = parseFloat(fd.get("price")) || 0;
+  var notes = fd.get("notes") || "";
+  var container = document.getElementById("order-usage-items");
+  var usages = [];
+  container.querySelectorAll("div").forEach(function(r) {
+    var s = r.querySelector("select"); var q = r.querySelector("input");
+    if (s && s.value && q && q.value) usages.push({ filament_id: s.value, qty_needed: parseFloat(q.value) || 0 });
+  });
+  if (!usages.length) { hideLoading(); btnUnload(submitBtn); alert("Selecione pelo menos um filamento."); return; }
+  if (sb) {
+    var ins = await sb.from("orders").insert({ product_name: product_name, price: price, notes: notes, status: "pendente", created_at: new Date().toISOString() }).select().single();
+    if (ins.error) { showError("Erro ao criar encomenda.", ins.error); hideLoading(); btnUnload(submitBtn); return; }
+    var orderId = ins.data.id;
+    for (var i = 0; i < usages.length; i++) {
+      await sb.from("order_items").insert({ order_id: orderId, filament_id: usages[i].filament_id, qty_needed: usages[i].qty_needed });
+    }
+    await fetchOrders(); await fetchOrderItems();
+  } else {
+    var order = { id: "local-" + Date.now(), product_name: product_name, price: price, notes: notes, status: "pendente", created_at: new Date().toISOString() };
+    localDB.orders.push(order);
+    usages.forEach(function(u) { localDB.order_items.push({ order_id: order.id, filament_id: u.filament_id, qty_needed: u.qty_needed }); });
+    localDB.save();
+  }
+  e.target.reset(); container.innerHTML = ""; addOrderUsageRow();
+  hideLoading(); btnUnload(submitBtn);
+  renderOrders();
+  alert("Encomenda criada!");
+});
+
+function renderOrders() {
+  var el = document.getElementById("orders-list");
+  if (!el) return;
+  el.innerHTML = "";
+  var orders = (localDB.orders || []).filter(function(o) { return o.status === "pendente"; });
+  if (!orders.length) {
+    el.innerHTML = "<p class='muted' style='padding:10px 0'>Nenhuma encomenda pendente.</p>";
+    return;
+  }
+  orders.slice().reverse().forEach(function(order) {
+    var items = (localDB.order_items || []).filter(function(i) { return i.order_id === order.id; });
+    var allOk = items.length > 0 && items.every(function(item) {
+      var fil = localDB.filaments.find(function(f) { return f.id === item.filament_id; });
+      return fil && parseFloat(fil.quantity) >= parseFloat(item.qty_needed);
+    });
+    var someOk = items.some(function(item) {
+      var fil = localDB.filaments.find(function(f) { return f.id === item.filament_id; });
+      return fil && parseFloat(fil.quantity) > 0;
+    });
+    var div = document.createElement("div"); div.className = "order-item";
+    if (allOk) div.style.borderColor = "rgba(10,245,196,.38)";
+    else if (someOk) div.style.borderColor = "rgba(245,192,10,.38)";
+    else if (items.length) div.style.borderColor = "rgba(255,91,91,.38)";
+
+    var header = document.createElement("div"); header.className = "order-header";
+    var nameEl = document.createElement("strong"); nameEl.textContent = order.product_name;
+    var priceEl = document.createElement("span"); priceEl.className = "order-price";
+    priceEl.textContent = "R$\u00a0" + parseFloat(order.price).toFixed(2).replace(".", ",");
+    var badge = document.createElement("span"); badge.className = "status-badge pendente"; badge.textContent = "Pendente";
+    header.appendChild(nameEl); header.appendChild(priceEl); header.appendChild(badge);
+    div.appendChild(header);
+
+    if (items.length) {
+      var filDiv = document.createElement("div"); filDiv.className = "order-filaments";
+      items.forEach(function(item) {
+        var fil = localDB.filaments.find(function(f) { return f.id === item.filament_id; });
+        var needed = parseFloat(item.qty_needed) || 0;
+        var available = fil ? (parseFloat(fil.quantity) || 0) : 0;
+        var frow = document.createElement("div"); frow.className = "order-fil-row";
+        var nameSpan = document.createElement("span"); nameSpan.className = "fil-name";
+        nameSpan.textContent = (fil ? fil.name : "Filamento removido") + ": " + needed.toFixed(0) + "g";
+        var stockSpan = document.createElement("span");
+        if (!fil) { stockSpan.className = "stock-none"; stockSpan.textContent = "\u2715 Removido"; }
+        else if (available >= needed) { stockSpan.className = "stock-ok"; stockSpan.textContent = "\u2713 " + available.toFixed(0) + "g disp."; }
+        else if (available > 0) { stockSpan.className = "stock-low"; stockSpan.textContent = "\u26a0 " + available.toFixed(0) + "g disp."; }
+        else { stockSpan.className = "stock-none"; stockSpan.textContent = "\u2715 Sem estoque"; }
+        frow.appendChild(nameSpan); frow.appendChild(stockSpan);
+        filDiv.appendChild(frow);
+      });
+      div.appendChild(filDiv);
+    }
+
+    if (order.notes) {
+      var notesEl2 = document.createElement("div"); notesEl2.className = "order-notes";
+      notesEl2.textContent = order.notes; div.appendChild(notesEl2);
+    }
+
+    var acts = document.createElement("div"); acts.className = "order-actions";
+    var completeBtn = document.createElement("button"); completeBtn.textContent = "\u2713 Marcar como Pronta"; completeBtn.className = "btn-complete";
+    var oCopy = order; var iCopy = items.slice();
+    completeBtn.onclick = async function() {
+      if (!confirm("Converter \"" + oCopy.product_name + "\" em venda? O estoque ser\u00e1 deduzido.")) return;
+      btnLoad(completeBtn);
+      await completeOrder(oCopy, iCopy);
+      btnUnload(completeBtn);
+    };
+    var delBtn2 = document.createElement("button"); delBtn2.textContent = "Apagar"; delBtn2.className = "btn-danger";
+    delBtn2.onclick = async function() {
+      if (!confirm("Remover esta encomenda?")) return;
+      btnLoad(delBtn2); await deleteOrder(oCopy.id); btnUnload(delBtn2);
+    };
+    acts.appendChild(completeBtn); acts.appendChild(delBtn2);
+    div.appendChild(acts);
+    el.appendChild(div);
+  });
+}
+
+async function completeOrder(order, items) {
+  showLoading(); await yieldUI();
+  if (sb) {
+    var ins = await sb.from("sales").insert({
+      product_name: order.product_name, price: order.price,
+      notes: order.notes || "", created_at: new Date().toISOString()
+    }).select().single();
+    if (ins.error) { showError("Erro ao criar venda.", ins.error); hideLoading(); return; }
+    var saleId = ins.data.id;
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      await sb.from("sale_items").insert({ sale_id: saleId, filament_id: item.filament_id, qty_used: item.qty_needed });
+      var fil = localDB.filaments.find(function(f) { return f.id === item.filament_id; });
+      if (fil && fil.id) {
+        var newQty = Math.max(0, (parseFloat(fil.quantity) || 0) - parseFloat(item.qty_needed));
+        await sb.from("filaments").update({ quantity: newQty }).eq("id", fil.id);
+        fil.quantity = newQty;
+      }
+    }
+    var existRes = await sb.from("products").select("id").eq("name", order.product_name).limit(1);
+    if (!existRes.data || !existRes.data.length) {
+      await sb.from("products").insert({ name: order.product_name, price: order.price });
+    }
+    await sb.from("orders").delete().eq("id", order.id);
+    await refreshAll();
+  } else {
+    localDB.sales.push({ product_name: order.product_name, price: order.price, notes: order.notes || "", created_at: new Date().toISOString() });
+    items.forEach(function(item) {
+      var f = localDB.filaments.find(function(x) { return x.id === item.filament_id; });
+      if (f) f.quantity = Math.max(0, (parseFloat(f.quantity) || 0) - parseFloat(item.qty_needed));
+    });
+    var oidx = localDB.orders.findIndex(function(o) { return o.id === order.id; });
+    if (oidx >= 0) localDB.orders.splice(oidx, 1);
+    localDB.order_items = localDB.order_items.filter(function(i) { return i.order_id !== order.id; });
+    localDB.save();
+  }
+  hideLoading();
+  renderOrders();
+  renderDashboard();
+  alert("Encomenda convertida em venda com sucesso!");
+}
+
+async function deleteOrder(orderId) {
+  showLoading(); await yieldUI();
+  if (sb && !String(orderId).startsWith("local-")) {
+    var { error } = await sb.from("orders").delete().eq("id", orderId);
+    if (error) { showError("Erro ao remover encomenda.", error); hideLoading(); return; }
+    await fetchOrders(); await fetchOrderItems();
+  } else {
+    var idx = localDB.orders.findIndex(function(o) { return o.id === orderId; });
+    if (idx >= 0) localDB.orders.splice(idx, 1);
+    localDB.order_items = localDB.order_items.filter(function(i) { return i.order_id !== orderId; });
+    localDB.save();
+  }
+  renderOrders();
+  hideLoading();
 }
 
 // -- Bootstrap -------------------------------------------------------------

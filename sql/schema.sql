@@ -35,3 +35,21 @@ create table if not exists sale_items (
   filament_id uuid references filaments(id) on delete set null,
   qty_used numeric
 );
+
+-- Encomendas (ordens de serviço pendentes)
+create table if not exists orders (
+  id uuid primary key default gen_random_uuid(),
+  product_name text not null,
+  price numeric not null default 0,
+  notes text,
+  status text not null default 'pendente',
+  created_at timestamptz default now()
+);
+
+-- Itens da encomenda (filamentos necessários, sem deduzir estoque)
+create table if not exists order_items (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid references orders(id) on delete cascade,
+  filament_id uuid references filaments(id) on delete set null,
+  qty_needed numeric not null default 0
+);
