@@ -13,13 +13,15 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY) {
 
 // -- Local fallback ----------------------------------------------------------
 const localDB = {
-  filaments: JSON.parse(localStorage.getItem("filaments") || "[]"),
-  sales:     JSON.parse(localStorage.getItem("sales")     || "[]"),
-  products:  JSON.parse(localStorage.getItem("products")  || "[]"),
+  filaments:  JSON.parse(localStorage.getItem("filaments")  || "[]"),
+  sales:      JSON.parse(localStorage.getItem("sales")      || "[]"),
+  products:   JSON.parse(localStorage.getItem("products")   || "[]"),
+  sale_items: JSON.parse(localStorage.getItem("sale_items") || "[]"),
   save() {
-    localStorage.setItem("filaments", JSON.stringify(this.filaments));
-    localStorage.setItem("sales",     JSON.stringify(this.sales));
-    localStorage.setItem("products",  JSON.stringify(this.products));
+    localStorage.setItem("filaments",  JSON.stringify(this.filaments));
+    localStorage.setItem("sales",      JSON.stringify(this.sales));
+    localStorage.setItem("products",   JSON.stringify(this.products));
+    localStorage.setItem("sale_items", JSON.stringify(this.sale_items));
   }
 };
 
@@ -36,6 +38,7 @@ function hideLoading() {
 
 // -- Sections ----------------------------------------------------------------
 const ALL_SECTIONS = [
+  "sec-dashboard",
   "sec-filaments-register",
   "sec-filaments-list",
   "sec-sales-register",
@@ -75,7 +78,7 @@ async function showApp(userEmail) {
       if (data && data.user) display = (data.user.user_metadata && data.user.user_metadata.display_name) || data.user.email || display;
     } catch (_) {}
   }
-  userArea.innerHTML = `<span>Ola, ${display}</span> <button id="signout">Sair</button>`;
+  userArea.innerHTML = `<span>Olá, ${display}</span> <button id="signout">Sair</button>`;
   document.getElementById("signout").onclick = signOut;
 
   document.getElementById("sales-view-list").onclick = function() {
@@ -93,6 +96,12 @@ async function showApp(userEmail) {
   await yieldUI();
   await refreshAll();
   hideLoading();
+  renderDashboard();
+  showSection("sec-dashboard");
+  if (appNav) {
+    appNav.querySelectorAll("button[data-sec]").forEach(function(b) { b.classList.remove("active"); });
+    var hb = appNav.querySelector("[data-sec='sec-dashboard']"); if (hb) hb.classList.add("active");
+  }
 }
 
 async function signUp() {
@@ -103,7 +112,7 @@ async function signUp() {
     if (error) return alert(error.message);
     alert("Verifique seu email ou entre com a senha cadastrada.");
   } else {
-    alert("Supabase nao configurado.");
+    alert("Supabase não configurado.");
   }
 }
 
@@ -133,7 +142,10 @@ if (appNav) {
       var secId = btn.dataset.sec;
       showLoading();
       await yieldUI();
-      if (secId === "sec-filaments-list") {
+      if (secId === "sec-dashboard") {
+        await refreshAll();
+        renderDashboard();
+      } else if (secId === "sec-filaments-list") {
         await fetchFilaments();
         renderFilamentsList();
       } else if (secId === "sec-sales-register") {
@@ -171,8 +183,14 @@ async function fetchProducts() {
   if (!error && data) { localDB.products = data; localDB.save(); }
 }
 
+async function fetchSaleItems() {
+  if (!sb) return;
+  const { data, error } = await sb.from("sale_items").select("qty_used");
+  if (!error && data) { localDB.sale_items = data; localDB.save(); }
+}
+
 async function refreshAll() {
-  await Promise.all([fetchFilaments(), fetchSales(), fetchProducts()]);
+  await Promise.all([fetchFilaments(), fetchSales(), fetchProducts(), fetchSaleItems()]);
 }
 
 // -- Helpers ------------------------------------------------------------------
@@ -237,7 +255,7 @@ function renderFilamentsList() {
     var delBtn = document.createElement("button"); delBtn.innerHTML = trashIcon(); delBtn.title = "Remover filamento";
     var fCopy = f;
     delBtn.onclick = async function() {
-      if (!confirm("Confirma exclusao do filamento \"" + fCopy.name + "\"?")) return;
+      if (!confirm("Confirma exclusão do filamento \"" + fCopy.name + "\"?")) return;
       await deleteFilament(fCopy.id, fCopy.name);
     };
     acts.appendChild(badge); acts.appendChild(delBtn);
@@ -288,7 +306,7 @@ async function deleteFilament(id, name) {
     if (idx >= 0) { localDB.filaments.splice(idx, 1); localDB.save(); }
   } else {
     var { data: refs } = await sb.from("sale_items").select("id").eq("filament_id", id).limit(1);
-    if (refs && refs.length) { hideLoading(); alert("Nao e possivel remover: filamento referenciado em vendas."); return; }
+    if (refs && refs.length) { hideLoading(); alert("Não é possível remover: filamento referenciado em vendas."); return; }
     var { error } = await sb.from("filaments").delete().eq("id", id);
     if (error) { showError("Erro ao remover filamento.", error); hideLoading(); return; }
     await fetchFilaments();
@@ -434,7 +452,7 @@ function renderSales() {
       var acts = document.createElement("div"); acts.className = "item-actions";
       var del = document.createElement("button"); del.textContent = "Apagar";
       var sCopy = s;
-      del.onclick = async function() { if (confirm("Confirma exclusao desta venda?")) await deleteSale(sCopy.id); };
+      del.onclick = async function() { if (confirm("Confirma exclusão desta venda?")) await deleteSale(sCopy.id); };
       var reuse = document.createElement("button"); reuse.textContent = "Reaproveitar";
       reuse.onclick = async function() { btnLoad(reuse); await reuseSale(sCopy); };
       acts.appendChild(del); acts.appendChild(reuse);
@@ -444,7 +462,7 @@ function renderSales() {
   } else {
     listEl.style.display = "none"; tableEl.style.display = "block";
     var tbl = document.createElement("table"); tbl.style.cssText = "width:100%;border-collapse:collapse";
-    tbl.innerHTML = "<thead><tr><th></th><th>Data</th><th>Produto</th><th>Preco</th><th>Obs.</th><th>Acoes</th></tr></thead>";
+    tbl.innerHTML = "<thead><tr><th></th><th>Data</th><th>Produto</th><th>Preço</th><th>Obs.</th><th>Ações</th></tr></thead>";
     var tbody = document.createElement("tbody");
     rows.forEach(function(s) {
       var tr = document.createElement("tr"); tr.style.borderBottom = "1px solid #333";
@@ -464,7 +482,7 @@ function renderSales() {
       var td = document.createElement("td");
       var del = document.createElement("button"); del.textContent = "Apagar";
       var sCopy = s;
-      del.onclick = async function() { if (confirm("Confirma exclusao?")) await deleteSale(sCopy.id); };
+      del.onclick = async function() { if (confirm("Confirma exclusão?")) await deleteSale(sCopy.id); };
       var reuse = document.createElement("button"); reuse.textContent = "Reaproveitar";
       reuse.onclick = async function() { btnLoad(reuse); await reuseSale(sCopy); };
       td.appendChild(del); td.appendChild(reuse); tr.appendChild(td); tbody.appendChild(tr);
@@ -550,6 +568,50 @@ function renderProducts() {
     acts.appendChild(venderBtn); acts.appendChild(editBtn); acts.appendChild(delBtn);
     d.appendChild(img); d.appendChild(info); d.appendChild(acts);
     el.appendChild(d);
+  });
+}
+
+// -- Dashboard render -------------------------------------------------------
+function renderDashboard() {
+  var totalRevenue   = localDB.sales.reduce(function(s, v) { return s + (parseFloat(v.price) || 0); }, 0);
+  var totalSales     = localDB.sales.length;
+  var currentStock   = localDB.filaments.reduce(function(s, f) { return s + (parseFloat(f.quantity) || 0); }, 0);
+  var filamentUsed   = localDB.sale_items.reduce(function(s, i) { return s + (parseFloat(i.qty_used) || 0); }, 0);
+  var fmtMoney = function(v) { return "R$\u00a0" + v.toFixed(2).replace(".", ","); };
+
+  var h = new Date().getHours();
+  var greet = h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
+  var greeting = document.getElementById("dash-greeting");
+  if (greeting) greeting.innerHTML = "<span class='highlight'>" + greet + "</span>\u00a0<span class='wave'>\uD83D\uDC4B</span>";
+
+  var stats = [
+    { icon: "\uD83D\uDCB0", value: fmtMoney(totalRevenue),             label: "Receita total" },
+    { icon: "\uD83D\uDCE6", value: String(totalSales),                 label: "Pe\u00e7as vendidas" },
+    { icon: "\uD83E\uDDF5", value: currentStock.toFixed(0) + "\u00a0g", label: "Estoque atual" },
+    { icon: "\u26A1",       value: filamentUsed.toFixed(0) + "\u00a0g", label: "Filamento usado" }
+  ];
+  var grid = document.getElementById("stats-grid");
+  if (grid) {
+    grid.innerHTML = "";
+    stats.forEach(function(s) {
+      var c = document.createElement("div"); c.className = "stat-card";
+      c.innerHTML = "<div class='stat-icon'>" + s.icon + "</div><div class='stat-value'>" + s.value + "</div><div class='stat-label'>" + s.label + "</div>";
+      grid.appendChild(c);
+    });
+  }
+
+  var recentEl = document.getElementById("recent-sales-list");
+  if (!recentEl) return;
+  recentEl.innerHTML = "";
+  var recent = (localDB.sales || []).slice().reverse().slice(0, 5);
+  if (!recent.length) {
+    recentEl.innerHTML = "<p class='muted' style='padding:10px 0'>Nenhuma venda registrada ainda.</p>";
+    return;
+  }
+  recent.forEach(function(s) {
+    var d = document.createElement("div"); d.className = "recent-item";
+    d.innerHTML = "<span class='recent-name'>" + s.product_name + "</span><span class='recent-price'>" + fmtMoney(parseFloat(s.price) || 0) + "</span>";
+    recentEl.appendChild(d);
   });
 }
 
