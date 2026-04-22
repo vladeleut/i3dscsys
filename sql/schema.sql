@@ -1,0 +1,37 @@
+-- SQL para criar tabelas no Supabase (execute no SQL Editor do Supabase)
+-- Filamentos
+create table if not exists filaments (
+  id uuid primary key default gen_random_uuid(),
+  name text,
+  color text,
+  manufacturer text,
+  quantity numeric,
+  photo text,
+  inserted_at timestamptz default now()
+);
+
+-- Produtos (catalogo)
+create table if not exists products (
+  id uuid primary key default gen_random_uuid(),
+  name text,
+  price numeric,
+  photo text,
+  inserted_at timestamptz default now()
+);
+
+-- Vendas
+create table if not exists sales (
+  id uuid primary key default gen_random_uuid(),
+  product_name text,
+  price numeric,
+  notes text,
+  created_at timestamptz default now()
+);
+
+-- Itens da venda (mapear uso de filamento para dedução)
+create table if not exists sale_items (
+  id uuid primary key default gen_random_uuid(),
+  sale_id uuid references sales(id) on delete cascade,
+  filament_id uuid references filaments(id) on delete set null,
+  qty_used numeric
+);
