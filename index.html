@@ -58,9 +58,16 @@
     <!-- 0. Dashboard -->
     <section id="sec-dashboard" class="section hidden">
       <div class="dash-greeting" id="dash-greeting"></div>
+      <div class="period-tabs" id="dash-period">
+        <button data-period="hoje" type="button">Hoje</button>
+        <button data-period="semana" type="button">Semana</button>
+        <button data-period="mes" type="button">Mês</button>
+        <button data-period="total" type="button" class="active">Total</button>
+      </div>
       <div class="stats-grid" id="stats-grid"></div>
+      <div id="low-stock-alert"></div>
       <div class="card" style="margin-top:14px">
-        <p class="dash-subtitle">Ultimas vendas</p>
+        <p class="dash-subtitle">Últimas vendas</p>
         <div id="recent-sales-list"></div>
       </div>
     </section>
@@ -82,6 +89,7 @@
     <!-- 2. Consultar Filamentos: apenas a lista -->
     <section id="sec-filaments-list" class="card section hidden">
       <h2>Filamentos em Estoque</h2>
+      <input id="filaments-search" type="search" class="search-box" placeholder="Buscar filamento…">
       <div id="filaments-list" class="list"></div>
     </section>
 
@@ -104,6 +112,7 @@
     <!-- 4. Consultar Vendas: apenas a lista -->
     <section id="sec-sales-list" class="card section hidden">
       <h2>Histórico de Vendas</h2>
+      <input id="sales-search" type="search" class="search-box" placeholder="Buscar venda…">
       <div class="view-toggle">
         <button id="sales-view-list" type="button" class="active">Lista</button>
         <button id="sales-view-table" type="button">Tabela</button>
@@ -115,6 +124,7 @@
     <!-- 5. Catálogo de Produtos -->
     <section id="sec-products" class="card section hidden">
       <h2>Catálogo de Produtos</h2>
+      <input id="products-search" type="search" class="search-box" placeholder="Buscar produto…">
       <div id="products-list" class="list"></div>
     </section>
 
@@ -133,6 +143,7 @@
       </div>
       <div class="card" style="margin-top:14px">
         <h2>Encomendas Pendentes</h2>
+        <input id="orders-search" type="search" class="search-box" placeholder="Buscar encomenda…">
         <div id="orders-list"></div>
       </div>
     </section>

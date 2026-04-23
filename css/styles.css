@@ -545,3 +545,46 @@ button[type="submit"].btn-loading::after{border-top-color:#04101e}
 @media(max-width:390px){
   .app-nav button{font-size:8px;padding:6px 1px 5px}
 }
+
+/* === PERIOD TABS === */
+.period-tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+.period-tabs button{
+  flex:1;min-width:54px;padding:8px 4px;font-size:12px;margin:0;
+}
+.period-tabs button.active{
+  background:linear-gradient(135deg,var(--a1),var(--a2));
+  color:#04101e;border:none;
+  box-shadow:0 2px 12px rgba(0,210,255,.25);
+}
+
+/* === SEARCH BOX === */
+.search-box{
+  display:block;width:100%;margin-bottom:12px;
+  padding:10px 14px;
+  background:rgba(255,255,255,.04);
+  border:1.5px solid rgba(255,255,255,.08);
+  border-radius:var(--r-sm);
+  color:var(--text);font-size:15px;outline:none;
+  -webkit-appearance:none;
+  transition:border-color .2s,box-shadow .2s;
+}
+.search-box:focus{border-color:var(--a1);box-shadow:0 0 0 3px rgba(0,210,255,.13)}
+.search-box::-webkit-search-cancel-button{cursor:pointer}
+
+/* === LOW STOCK === */
+.low-stock-card{
+  margin-top:12px;padding:14px 16px;
+  background:rgba(255,91,91,.07);
+  border:1px solid rgba(255,91,91,.28);
+  border-radius:var(--r);
+  animation:fadeUp .22s ease both;
+}
+.low-stock-title{font-size:13px;font-weight:700;color:var(--danger);margin-bottom:8px}
+.low-stock-list{display:flex;flex-direction:column;gap:5px}
+.low-stock-row{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+.item-low-stock{border-color:rgba(255,91,91,.28)!important}
+.qty-badge-low{
+  background:rgba(255,91,91,.12)!important;
+  color:var(--danger)!important;
+  border-color:rgba(255,91,91,.3)!important;
+}

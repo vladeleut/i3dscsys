@@ -20,12 +20,23 @@ const localDB = {
   orders:      JSON.parse(localStorage.getItem("orders")      || "[]"),
   order_items: JSON.parse(localStorage.getItem("order_items") || "[]"),
   save() {
-    localStorage.setItem("filaments",   JSON.stringify(this.filaments));
-    localStorage.setItem("sales",       JSON.stringify(this.sales));
-    localStorage.setItem("products",    JSON.stringify(this.products));
-    localStorage.setItem("sale_items",  JSON.stringify(this.sale_items));
-    localStorage.setItem("orders",      JSON.stringify(this.orders));
-    localStorage.setItem("order_items", JSON.stringify(this.order_items));
+    // Remove base64 photos before persisting — they're huge and already estão no Supabase
+    var noB64 = function(arr) {
+      return arr.map(function(r) {
+        if (!r || !r.photo || !String(r.photo).startsWith("data:")) return r;
+        var c = Object.assign({}, r); c.photo = null; return c;
+      });
+    };
+    try {
+      localStorage.setItem("filaments",   JSON.stringify(noB64(this.filaments)));
+      localStorage.setItem("sales",       JSON.stringify(this.sales));
+      localStorage.setItem("products",    JSON.stringify(noB64(this.products)));
+      localStorage.setItem("sale_items",  JSON.stringify(this.sale_items));
+      localStorage.setItem("orders",      JSON.stringify(this.orders));
+      localStorage.setItem("order_items", JSON.stringify(this.order_items));
+    } catch(e) {
+      console.warn("localStorage cheio, dados apenas em memória esta sessão:", e.message);
+    }
   }
 };
 
@@ -96,6 +107,15 @@ async function showApp(userEmail) {
     this.classList.add("active"); document.getElementById("sales-view-list").classList.remove("active");
     renderSales();
   };
+
+  document.querySelectorAll("#dash-period button").forEach(function(btn) {
+    btn.onclick = function() {
+      dashPeriod = btn.dataset.period;
+      document.querySelectorAll("#dash-period button").forEach(function(b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      renderDashboard();
+    };
+  });
 
   showLoading();
   await yieldUI();
@@ -223,19 +243,18 @@ function toBase64(file) {
 
 async function uploadFiles(files, bucket) {
   if (!files || !files.length) return null;
+  if (!sb) throw new Error("Supabase não está configurado. A foto não pode ser enviada.");
   var paths = [];
   for (var i = 0; i < files.length; i++) {
     var file = files[i];
     if (!file || !file.size) continue;
-    if (sb) {
-      var uuid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + "-" + i + "-" + Math.random().toString(36).slice(2));
-      var fn = uuid + "-" + file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
-      var up = await sb.storage.from(bucket).upload(fn, file, { cacheControl: "3600", upsert: true });
-      if (!up.error) { paths.push(fn); }
-      else { console.warn("Upload falhou (" + bucket + "):", up.error.message); paths.push(await toBase64(file)); }
-    } else {
-      paths.push(await toBase64(file));
+    var uuid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + "-" + i + "-" + Math.random().toString(36).slice(2));
+    var fn = uuid + "-" + file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+    var up = await sb.storage.from(bucket).upload(fn, file, { cacheControl: "3600", upsert: true });
+    if (up.error) {
+      throw new Error("Falha ao enviar foto para o Supabase (" + bucket + "): " + up.error.message + "\n\nVerifique se o bucket existe e se a política RLS permite uploads autenticados.");
     }
+    paths.push(fn);
   }
   if (!paths.length) return null;
   return paths.length === 1 ? paths[0] : JSON.stringify(paths);
@@ -297,6 +316,8 @@ function btnUnload(btn) {
 }
 function yieldUI() { return new Promise(function(r) { requestAnimationFrame(r); }); }
 var BLANK = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+var dashPeriod = "total";
+var LOW_STOCK_THRESHOLD = 200; // gramas
 
 // -- Lightbox -------------------------------------------------------------
 var _lbUrls = []; var _lbIdx = 0;
@@ -344,10 +365,16 @@ function closeLightbox() { var lb = document.getElementById("lightbox"); if (lb)
 function renderFilamentsList() {
   var el = document.getElementById("filaments-list");
   el.innerHTML = "";
+  var q = (document.getElementById("filaments-search").value || "").toLowerCase().trim();
   var seen = new Set();
-  var rows = localDB.filaments.filter(function(f) { var k = f.id || f.name; if (seen.has(k)) return false; seen.add(k); return true; });
+  var rows = localDB.filaments.filter(function(f) { var k = f.id || f.name; if (seen.has(k)) return false; seen.add(k); return true; }).filter(function(f) {
+    if (!q) return true;
+    return (f.name||"").toLowerCase().includes(q)||(f.color||"").toLowerCase().includes(q)||(f.manufacturer||"").toLowerCase().includes(q);
+  });
+  if (!rows.length && localDB.filaments.length) { el.innerHTML = "<p class='muted' style='padding:10px 0'>Nenhum resultado para \"" + q + "\".</p>"; return; }
   rows.forEach(function(f) {
-    var div = document.createElement("div"); div.className = "item";
+    var isLow = (parseFloat(f.quantity) || 0) < LOW_STOCK_THRESHOLD;
+    var div = document.createElement("div"); div.className = "item" + (isLow ? " item-low-stock" : "");
     var img = document.createElement("img"); img.alt = ""; img.src = BLANK; img.style.cursor = "pointer";
     var fPhoto = f.photo; var fBucket = "filament-photos";
     resolvePhotoUrl(fPhoto, fBucket).then(function(u) {
@@ -356,7 +383,7 @@ function renderFilamentsList() {
     var info = document.createElement("div"); info.className = "item-info";
     info.innerHTML = "<strong>" + f.name + "</strong><div class='muted'>" + f.color + " — " + f.manufacturer + "</div>";
     var acts = document.createElement("div"); acts.className = "item-actions";
-    var badge = document.createElement("span"); badge.className = "qty-badge"; badge.id = "badge-" + (f.id || f.name); badge.textContent = (f.quantity || 0) + " g";
+    var badge = document.createElement("span"); badge.className = "qty-badge" + (isLow ? " qty-badge-low" : ""); badge.id = "badge-" + (f.id || f.name); badge.textContent = (f.quantity || 0) + " g";
     var refillBtn = document.createElement("button"); refillBtn.textContent = "+1kg"; refillBtn.title = "Adicionar 1000g ao estoque";
     refillBtn.style.cssText = "padding:6px 10px;font-size:12px";
     var fCopy2 = f;
@@ -589,7 +616,11 @@ function renderSales() {
   var listEl  = document.getElementById("sales-list");
   var tableEl = document.getElementById("sales-table");
   listEl.innerHTML = ""; tableEl.innerHTML = "";
-  var rows = (localDB.sales || []).slice().reverse();
+  var q = (document.getElementById("sales-search").value || "").toLowerCase().trim();
+  var rows = (localDB.sales || []).slice().reverse().filter(function(s) {
+    if (!q) return true;
+    return (s.product_name||"").toLowerCase().includes(q)||(s.notes||"").toLowerCase().includes(q);
+  });
 
   if (salesViewMode === "list") {
     listEl.style.display = "flex"; tableEl.style.display = "none";
@@ -675,7 +706,12 @@ async function reuseSale(sale) {
 // -- Products render -------------------------------------------------------
 function renderProducts() {
   var el = document.getElementById("products-list"); el.innerHTML = "";
-  localDB.products.forEach(function(p) {
+  var q = (document.getElementById("products-search").value || "").toLowerCase().trim();
+  var rows = localDB.products.filter(function(p) {
+    if (!q) return true;
+    return (p.name||"").toLowerCase().includes(q);
+  });
+  rows.forEach(function(p) {
     var d = document.createElement("div"); d.className = "item";
     var img = document.createElement("img"); img.alt = ""; img.src = BLANK; img.style.cursor = "pointer";
     var pPhoto = p.photo; var pBucket = "product-photos";
@@ -748,23 +784,38 @@ function renderProducts() {
 }
 
 // -- Dashboard render -------------------------------------------------------
+function getPeriodSales() {
+  var now = new Date();
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return (localDB.sales || []).filter(function(s) {
+    if (dashPeriod === "total") return true;
+    var d = new Date(s.created_at);
+    if (dashPeriod === "hoje")  return d >= today;
+    if (dashPeriod === "semana") { var w = new Date(today); w.setDate(w.getDate() - 6);  return d >= w; }
+    if (dashPeriod === "mes")   { var m = new Date(today); m.setDate(m.getDate() - 29); return d >= m; }
+    return true;
+  });
+}
+
 function renderDashboard() {
-  var totalRevenue   = localDB.sales.reduce(function(s, v) { return s + (parseFloat(v.price) || 0); }, 0);
-  var totalSales     = localDB.sales.length;
-  var currentStock   = localDB.filaments.reduce(function(s, f) { return s + (parseFloat(f.quantity) || 0); }, 0);
-  var filamentUsed   = localDB.sale_items.reduce(function(s, i) { return s + (parseFloat(i.qty_used) || 0); }, 0);
   var fmtMoney = function(v) { return "R$\u00a0" + v.toFixed(2).replace(".", ","); };
+  var filtered = getPeriodSales();
+  var totalRevenue  = filtered.reduce(function(s, v) { return s + (parseFloat(v.price) || 0); }, 0);
+  var totalSales    = filtered.length;
+  var currentStock  = localDB.filaments.reduce(function(s, f) { return s + (parseFloat(f.quantity) || 0); }, 0);
+  var pendingOrders = (localDB.orders || []).filter(function(o) { return o.status === "pendente"; }).length;
 
   var h = new Date().getHours();
   var greet = h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
   var greeting = document.getElementById("dash-greeting");
   if (greeting) greeting.innerHTML = "<span class='highlight'>" + greet + "</span>\u00a0<span class='wave'>\uD83D\uDC4B</span>";
 
+  var pLabel = { hoje: "hoje", semana: "\u00faltimos 7 dias", mes: "\u00faltimos 30 dias", total: "total" }[dashPeriod] || "total";
   var stats = [
-    { icon: "\uD83D\uDCB0", value: fmtMoney(totalRevenue),             label: "Receita total" },
-    { icon: "\uD83D\uDCE6", value: String(totalSales),                 label: "Pe\u00e7as vendidas" },
+    { icon: "\uD83D\uDCB0", value: fmtMoney(totalRevenue), label: "Receita \u2014 " + pLabel },
+    { icon: "\uD83D\uDCE6", value: String(totalSales),     label: "Pe\u00e7as \u2014 " + pLabel },
     { icon: "\uD83E\uDDF5", value: currentStock.toFixed(0) + "\u00a0g", label: "Estoque atual" },
-    { icon: "\u26A1",       value: filamentUsed.toFixed(0) + "\u00a0g", label: "Filamento usado" }
+    { icon: "\uD83D\uDCCB", value: String(pendingOrders),  label: "Encomendas pendentes" }
   ];
   var grid = document.getElementById("stats-grid");
   if (grid) {
@@ -774,6 +825,22 @@ function renderDashboard() {
       c.innerHTML = "<div class='stat-icon'>" + s.icon + "</div><div class='stat-value'>" + s.value + "</div><div class='stat-label'>" + s.label + "</div>";
       grid.appendChild(c);
     });
+  }
+
+  // Alerta de estoque baixo
+  var lowEl = document.getElementById("low-stock-alert");
+  if (lowEl) {
+    var lowItems = (localDB.filaments || []).filter(function(f) { return (parseFloat(f.quantity) || 0) < LOW_STOCK_THRESHOLD; });
+    if (lowItems.length) {
+      var html = "<div class='low-stock-card'><div class='low-stock-title'>\u26a0\ufe0f Estoque baixo (&lt; " + LOW_STOCK_THRESHOLD + "g)</div><div class='low-stock-list'>";
+      lowItems.forEach(function(f) {
+        html += "<div class='low-stock-row'><span>" + f.name + " \u2014 " + (f.color || "") + "</span><span class='stock-" + ((parseFloat(f.quantity)||0) > 0 ? "low" : "none") + "'>" + (parseFloat(f.quantity) || 0).toFixed(0) + "g</span></div>";
+      });
+      html += "</div></div>";
+      lowEl.innerHTML = html;
+    } else {
+      lowEl.innerHTML = "";
+    }
   }
 
   var recentEl = document.getElementById("recent-sales-list");
@@ -870,9 +937,13 @@ function renderOrders() {
   var el = document.getElementById("orders-list");
   if (!el) return;
   el.innerHTML = "";
-  var orders = (localDB.orders || []).filter(function(o) { return o.status === "pendente"; });
+  var q = (document.getElementById("orders-search").value || "").toLowerCase().trim();
+  var orders = (localDB.orders || []).filter(function(o) { return o.status === "pendente"; }).filter(function(o) {
+    if (!q) return true;
+    return (o.product_name||"").toLowerCase().includes(q)||(o.notes||"").toLowerCase().includes(q);
+  });
   if (!orders.length) {
-    el.innerHTML = "<p class='muted' style='padding:10px 0'>Nenhuma encomenda pendente.</p>";
+    el.innerHTML = q ? "<p class='muted' style='padding:10px 0'>Nenhum resultado para \"" + q + "\".</p>" : "<p class='muted' style='padding:10px 0'>Nenhuma encomenda pendente.</p>";
     return;
   }
   orders.slice().reverse().forEach(function(order) {
@@ -1000,6 +1071,15 @@ async function deleteOrder(orderId) {
   renderOrders();
   hideLoading();
 }
+
+// -- Search wiring ---------------------------------------------------------
+(function() {
+  [["filaments-search", function() { renderFilamentsList(); }],
+   ["sales-search",     function() { renderSales(); }],
+   ["products-search",  function() { renderProducts(); }],
+   ["orders-search",    function() { renderOrders(); }]]
+  .forEach(function(p) { var el = document.getElementById(p[0]); if (el) el.oninput = p[1]; });
+})();
 
 // -- Bootstrap -------------------------------------------------------------
 document.getElementById("sign-in").onclick = async function() {
