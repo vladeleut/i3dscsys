@@ -421,6 +421,41 @@ button[type="submit"].btn-loading::after{border-top-color:#04101e}
   #lightbox-prev{left:-44px}#lightbox-next{right:-44px}
 }
 
+/* === EDIT MODAL === */
+.modal-overlay{
+  position:fixed;inset:0;z-index:10001;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.65);
+  backdrop-filter:blur(10px);
+  padding:20px;
+}
+.hidden.modal-overlay{display:none}
+.modal-card{
+  width:100%;max-width:430px;
+  max-height:90vh;overflow-y:auto;
+  animation:fadeUp .2s ease both;
+}
+.modal-title{
+  font-size:18px;font-weight:700;margin-bottom:16px;
+  background:linear-gradient(110deg,var(--a1),var(--a2));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;
+}
+.btn-ghost{
+  background:rgba(255,255,255,.07);
+  border:1px solid rgba(255,255,255,.14);
+  color:var(--text);
+  padding:12px 18px;border-radius:var(--r-sm);
+  cursor:pointer;font-size:15px;font-weight:600;
+  transition:background .15s;
+}
+.btn-ghost:hover{background:rgba(255,255,255,.13)}
+/* Dica visual: parte de texto do card clicável */
+.item-info.clickable{cursor:pointer;flex:1}
+.item-info.clickable:hover .item-info-inner{
+  text-decoration:underline;text-decoration-color:rgba(255,255,255,.25);
+}
+
 /* === DASHBOARD === */
 .dash-greeting{
   padding:4px 2px 20px;

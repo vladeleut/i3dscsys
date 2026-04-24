@@ -380,8 +380,9 @@ function renderFilamentsList() {
     resolvePhotoUrl(fPhoto, fBucket).then(function(u) {
       if (u) { img.src = u; img.onclick = function() { resolveAllPhotoUrls(fPhoto, fBucket).then(function(urls) { openLightbox(urls, 0); }); }; }
     }).catch(function() {});
-    var info = document.createElement("div"); info.className = "item-info";
-    info.innerHTML = "<strong>" + f.name + "</strong><div class='muted'>" + f.color + " — " + f.manufacturer + "</div>";
+    var info = document.createElement("div"); info.className = "item-info clickable"; info.title = "Clique para editar";
+    info.innerHTML = "<div class='item-info-inner'><strong>" + f.name + "</strong><div class='muted'>" + f.color + " — " + f.manufacturer + "</div></div>";
+    var fEdit = f; info.onclick = function() { openFilamentEdit(fEdit); };
     var acts = document.createElement("div"); acts.className = "item-actions";
     var badge = document.createElement("span"); badge.className = "qty-badge" + (isLow ? " qty-badge-low" : ""); badge.id = "badge-" + (f.id || f.name); badge.textContent = (f.quantity || 0) + " g";
     var refillBtn = document.createElement("button"); refillBtn.textContent = "+1kg"; refillBtn.title = "Adicionar 1000g ao estoque";
@@ -403,6 +404,56 @@ function renderFilamentsList() {
     el.appendChild(div);
   });
 }
+
+// -- Filament edit modal --------------------------------------------------
+var _editFilId = null;
+
+function openFilamentEdit(f) {
+  _editFilId = f.id || null;
+  document.getElementById("edit-fil-name").value = f.name || "";
+  document.getElementById("edit-fil-color").value = f.color || "";
+  document.getElementById("edit-fil-manufacturer").value = f.manufacturer || "";
+  document.getElementById("edit-fil-quantity").value = f.quantity != null ? f.quantity : "";
+  document.getElementById("edit-fil-photo").value = "";
+  document.getElementById("filament-edit-modal").classList.remove("hidden");
+  document.getElementById("edit-fil-name").focus();
+}
+
+document.getElementById("filament-edit-cancel").addEventListener("click", function() {
+  document.getElementById("filament-edit-modal").classList.add("hidden");
+});
+document.getElementById("filament-edit-modal").addEventListener("click", function(e) {
+  if (e.target === this) this.classList.add("hidden");
+});
+
+document.getElementById("filament-edit-form").addEventListener("submit", async function(e) {
+  e.preventDefault();
+  var submitBtn = document.getElementById("edit-fil-submit");
+  btnLoad(submitBtn);
+  showLoading();
+  await yieldUI();
+  var updates = {
+    name: document.getElementById("edit-fil-name").value.trim(),
+    color: document.getElementById("edit-fil-color").value.trim(),
+    manufacturer: document.getElementById("edit-fil-manufacturer").value.trim(),
+    quantity: parseFloat(document.getElementById("edit-fil-quantity").value) || 0
+  };
+  var photoFiles = document.getElementById("edit-fil-photo").files;
+  if (photoFiles && photoFiles.length) {
+    var newPhoto = await uploadFiles(photoFiles, "filament-photos");
+    if (newPhoto) updates.photo = newPhoto;
+  }
+  if (sb && _editFilId) {
+    var { error } = await sb.from("filaments").update(updates).eq("id", _editFilId);
+    if (error) { showError("Erro ao atualizar filamento.", error); hideLoading(); btnUnload(submitBtn); return; }
+  }
+  var local = localDB.filaments.find(function(f) { return _editFilId ? f.id === _editFilId : f.name === updates.name; });
+  if (local) { Object.assign(local, updates); localDB.save(); }
+  await fetchFilaments();
+  hideLoading();
+  btnUnload(submitBtn);
+  document.getElementById("filament-edit-modal").classList.add("hidden");
+});
 
 // -- Filament form ---------------------------------------------------------
 document.getElementById("filament-form").addEventListener("submit", async function(e) {
@@ -432,14 +483,22 @@ document.getElementById("filament-form").addEventListener("submit", async functi
 });
 
 async function addFilamentStock(id, name, grams) {
-  var fil = localDB.filaments.find(function(f) { return f.id === id || f.name === name; });
-  if (!fil) return;
-  var newQty = (parseFloat(fil.quantity) || 0) + grams;
+  var newQty;
   if (sb && id) {
+    // Lê quantidade atual direto do Supabase para evitar valor desatualizado no cache
+    var { data: cur, error: fetchErr } = await sb.from("filaments").select("quantity").eq("id", id).single();
+    if (fetchErr || !cur) { showError("Erro ao ler estoque atual.", fetchErr); return; }
+    newQty = (parseFloat(cur.quantity) || 0) + grams;
     var { error } = await sb.from("filaments").update({ quantity: newQty }).eq("id", id);
     if (error) { showError("Erro ao atualizar estoque.", error); return; }
+  } else {
+    var fil0 = localDB.filaments.find(function(f) { return f.name === name; });
+    if (!fil0) return;
+    newQty = (parseFloat(fil0.quantity) || 0) + grams;
   }
-  fil.quantity = newQty; localDB.save();
+  // Atualiza cache local — busca exclusivamente por id OU por name, nunca os dois juntos
+  var fil = localDB.filaments.find(function(f) { return id ? f.id === id : f.name === name; });
+  if (fil) { fil.quantity = newQty; localDB.save(); }
   var badge = document.getElementById("badge-" + (id || name));
   if (badge) badge.textContent = newQty + " g";
 }

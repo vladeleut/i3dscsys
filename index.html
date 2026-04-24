@@ -183,6 +183,25 @@
     </div>
   </div>
 
+  <!-- Modal de edição de filamento -->
+  <div id="filament-edit-modal" class="modal-overlay hidden">
+    <div class="modal-card card">
+      <h3 class="modal-title">Editar Filamento</h3>
+      <form id="filament-edit-form">
+        <input id="edit-fil-name" placeholder="Nome (ex: PLA Branco)" required>
+        <input id="edit-fil-color" placeholder="Cor (ex: Branco)" required>
+        <input id="edit-fil-manufacturer" placeholder="Fabricante" required>
+        <input id="edit-fil-quantity" type="number" step="0.01" placeholder="Quantidade atual (g)" required>
+        <label style="color:var(--muted);font-size:13px;margin-top:4px">Nova foto (opcional — substitui a atual)</label>
+        <input id="edit-fil-photo" type="file" accept="image/*" multiple>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button type="submit" id="edit-fil-submit">Salvar</button>
+          <button type="button" id="filament-edit-cancel" class="btn-ghost">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>(function(){var s=document.createElement('script');s.src='js/app.js?v='+Date.now();document.body.appendChild(s);})()</script>
 </body>
 </html>
