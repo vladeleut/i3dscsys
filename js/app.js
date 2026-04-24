@@ -355,6 +355,12 @@ function btnUnload(btn) {
   btn.classList.remove("btn-loading");
   btn.disabled = false;
 }
+function btnReset(btn, text) {
+  if (!btn) return;
+  btn.innerHTML = text !== undefined ? text : (btn._origHTML || "");
+  btn.classList.remove("btn-loading");
+  btn.disabled = false;
+}
 function yieldUI() { return new Promise(function(r) { requestAnimationFrame(r); }); }
 var BLANK = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 var dashPeriod = "total";
@@ -812,7 +818,11 @@ function renderProducts() {
     return (p.name||"").toLowerCase().includes(q);
   });
   rows.forEach(function(p) {
-    var d = document.createElement("div"); d.className = "item";
+    var d = document.createElement("div"); d.className = "item product-item";
+    d.addEventListener("click", function(e) {
+      if (e.target.closest("button") || e.target.closest("a")) return;
+      d.classList.toggle("expanded");
+    });
     var img = document.createElement("img"); img.alt = ""; img.src = BLANK; img.style.cursor = "pointer";
     var pPhoto = p.photo; var pBucket = "product-photos";
     resolvePhotoUrl(pPhoto, pBucket).then(function(u) {
@@ -877,17 +887,8 @@ function renderProducts() {
       hideLoading();
     };
 
-    var editBtn = document.createElement("button"); editBtn.textContent = "Editar preco";
-    editBtn.onclick = async function() {
-      var val = prompt("Novo preco:", String(pCopy.price || 0)); if (val === null) return;
-      var newPrice = parseFloat(val) || 0;
-      if (sb) {
-        showLoading();
-        var { error } = await sb.from("products").update({ price: newPrice }).eq("id", pCopy.id);
-        if (error) { showError("Erro ao atualizar preco.", error); } else { pCopy.price = newPrice; localDB.save(); renderProducts(); }
-        hideLoading();
-      } else { pCopy.price = newPrice; localDB.save(); renderProducts(); }
-    };
+    var editBtn = document.createElement("button"); editBtn.textContent = "Editar";
+    editBtn.onclick = function(e) { e.stopPropagation(); openProductEdit(pCopy); };
 
     var delBtn = document.createElement("button"); delBtn.textContent = "Remover";
     delBtn.onclick = async function() {
@@ -927,9 +928,10 @@ function addProductUsageRow() {
   });
   sel.addEventListener("change", function() {
     if (sel.value && container.lastElementChild === row) addProductUsageRow();
-    updateProductDelVisibility();
+    updateProductDelVisibility(); updateProductTotalGrams();
   });
-  delBtn.onclick = function() { row.remove(); updateProductDelVisibility(); };
+  qty.addEventListener("input", function() { updateProductTotalGrams(); });
+  delBtn.onclick = function() { row.remove(); updateProductDelVisibility(); updateProductTotalGrams(); };
   row.appendChild(sel); row.appendChild(qty); row.appendChild(delBtn);
   container.appendChild(row);
   updateProductDelVisibility();
@@ -938,6 +940,57 @@ function addProductUsageRow() {
 function updateProductDelVisibility() {
   var rows = document.querySelectorAll("#product-usage-items .usage-row");
   rows.forEach(function(r) { var b = r.querySelector("button"); if (b) b.style.display = rows.length > 1 ? "inline-block" : "none"; });
+}
+
+function updateProductTotalGrams() {
+  var total = 0;
+  document.querySelectorAll("#product-usage-items .usage-row").forEach(function(row) {
+    var q = row.querySelector("input[type='number']"); if (q && q.value) total += parseFloat(q.value) || 0;
+  });
+  var el = document.getElementById("product-total-grams");
+  if (el) el.textContent = "Total utilizado: " + total.toFixed(1) + " g";
+}
+
+function addProductEditUsageRow(preFilId, preQty) {
+  var container = document.getElementById("edit-prod-usage-items");
+  var row = document.createElement("div"); row.className = "usage-row";
+  var sel = document.createElement("select"); sel.style.flex = "1";
+  var qty = document.createElement("input"); qty.type = "number"; qty.step = "0.1"; qty.placeholder = "g utilizado"; qty.style.width = "110px";
+  var delBtn = document.createElement("button"); delBtn.type = "button"; delBtn.innerHTML = trashIcon();
+  var placeholder = document.createElement("option"); placeholder.value = ""; placeholder.text = "Escolha filamento"; sel.appendChild(placeholder);
+  var seen = new Set();
+  localDB.filaments.sort(function(a,b){return (a.name||"").localeCompare(b.name||"","pt-BR",{sensitivity:"base"});}).forEach(function(f) {
+    var key = f.id || f.name; if (seen.has(key)) return; seen.add(key);
+    var o = document.createElement("option");
+    o.value = f.id || f.name;
+    o.text = f.name + " \u2014 " + (f.color || "?") + " (" + (f.quantity || 0) + "g)";
+    sel.appendChild(o);
+  });
+  if (preFilId) sel.value = preFilId;
+  if (preQty) qty.value = preQty;
+  qty.addEventListener("input", function() { updateEditProductTotalGrams(); });
+  sel.addEventListener("change", function() {
+    if (sel.value && container.lastElementChild === row) addProductEditUsageRow();
+    updateEditProductDelVisibility(); updateEditProductTotalGrams();
+  });
+  delBtn.onclick = function() { row.remove(); updateEditProductDelVisibility(); updateEditProductTotalGrams(); };
+  row.appendChild(sel); row.appendChild(qty); row.appendChild(delBtn);
+  container.appendChild(row);
+  updateEditProductDelVisibility(); updateEditProductTotalGrams();
+}
+
+function updateEditProductDelVisibility() {
+  var rows = document.querySelectorAll("#edit-prod-usage-items .usage-row");
+  rows.forEach(function(r) { var b = r.querySelector("button"); if (b) b.style.display = rows.length > 1 ? "inline-block" : "none"; });
+}
+
+function updateEditProductTotalGrams() {
+  var total = 0;
+  document.querySelectorAll("#edit-prod-usage-items .usage-row").forEach(function(row) {
+    var q = row.querySelector("input[type='number']"); if (q && q.value) total += parseFloat(q.value) || 0;
+  });
+  var el = document.getElementById("edit-prod-total-grams");
+  if (el) el.textContent = "Total: " + total.toFixed(1) + " g";
 }
 
 document.getElementById("product-form-toggle").addEventListener("click", function() {
@@ -953,6 +1006,7 @@ document.getElementById("product-form").addEventListener("submit", async functio
   btnLoad(submitBtn); showLoading(); await yieldUI();
   var name = e.target.prod_name.value.trim();
   var price = parseFloat(e.target.prod_price.value) || 0;
+  var printTime = e.target.prod_print_time.value ? (parseFloat(e.target.prod_print_time.value) || null) : null;
   var filInfo = [];
   document.querySelectorAll("#product-usage-items .usage-row").forEach(function(row) {
     var sel = row.querySelector("select"); var qty = row.querySelector("input");
@@ -963,7 +1017,7 @@ document.getElementById("product-form").addEventListener("submit", async functio
   var photoFiles = e.target.prod_photo.files;
   var photoVal = null;
   if (photoFiles && photoFiles.length) { photoVal = await uploadFiles(photoFiles, "product-photos"); }
-  var obj = { name: name, price: price, filaments_info: filInfo.length ? JSON.stringify(filInfo) : null };
+  var obj = { name: name, price: price, print_time: printTime, filaments_info: filInfo.length ? JSON.stringify(filInfo) : null };
   if (photoVal) obj.photo = photoVal;
   if (sb) {
     var { error } = await sb.from("products").insert(obj);
@@ -981,6 +1035,60 @@ document.getElementById("product-form").addEventListener("submit", async functio
   hideLoading(); btnUnload(submitBtn);
   renderProducts();
   alert("Produto cadastrado!");
+});
+
+// -- Product edit modal ---------------------------------------------------
+var _editProdId = null;
+function openProductEdit(p) {
+  _editProdId = p.id || null;
+  document.getElementById("edit-prod-name").value = p.name || "";
+  document.getElementById("edit-prod-price").value = p.price || "";
+  document.getElementById("edit-prod-print-time").value = p.print_time || "";
+  var container = document.getElementById("edit-prod-usage-items");
+  container.innerHTML = "";
+  var filArr = [];
+  if (p.filaments_info) { try { filArr = JSON.parse(p.filaments_info); } catch(e) {} }
+  filArr.forEach(function(f) { addProductEditUsageRow(f.filament_id, f.qty); });
+  addProductEditUsageRow();
+  updateEditProductTotalGrams();
+  document.getElementById("product-edit-modal").classList.remove("hidden");
+  document.getElementById("edit-prod-name").focus();
+}
+document.getElementById("product-edit-cancel").addEventListener("click", function() {
+  document.getElementById("product-edit-modal").classList.add("hidden");
+});
+document.getElementById("product-edit-modal").addEventListener("click", function(e) {
+  if (e.target === this) this.classList.add("hidden");
+});
+document.getElementById("product-edit-form").addEventListener("submit", async function(e) {
+  e.preventDefault();
+  var submitBtn = document.getElementById("edit-prod-submit");
+  btnLoad(submitBtn); showLoading(); await yieldUI();
+  var name  = document.getElementById("edit-prod-name").value.trim();
+  var price = parseFloat(document.getElementById("edit-prod-price").value) || 0;
+  var ptVal = document.getElementById("edit-prod-print-time").value;
+  var pTime = ptVal ? (parseFloat(ptVal) || null) : null;
+  var filInfo = [];
+  document.querySelectorAll("#edit-prod-usage-items .usage-row").forEach(function(row) {
+    var sel = row.querySelector("select"); var qty = row.querySelector("input[type='number']");
+    if (!sel || !sel.value || !qty || !qty.value) return;
+    var fil = localDB.filaments.find(function(f) { return f.id === sel.value || f.name === sel.value; });
+    filInfo.push({ filament_id: sel.value, name: fil ? fil.name : sel.value, color: fil ? (fil.color || "") : "", qty: parseFloat(qty.value) || 0 });
+  });
+  var updates = { name: name, price: price, print_time: pTime, filaments_info: filInfo.length ? JSON.stringify(filInfo) : null };
+  var photoFiles = document.getElementById("edit-prod-photo").files;
+  if (photoFiles && photoFiles.length) { updates.photo = await uploadFiles(photoFiles, "product-photos"); }
+  if (sb && _editProdId) {
+    var { error } = await sb.from("products").update(updates).eq("id", _editProdId);
+    if (error) { showError("Erro ao atualizar produto.", error); btnUnload(submitBtn); hideLoading(); return; }
+    await fetchProducts();
+  } else {
+    var idx = localDB.products.findIndex(function(x){return x.id===_editProdId;});
+    if (idx>=0){Object.assign(localDB.products[idx], updates);localDB.save();}
+  }
+  document.getElementById("product-edit-modal").classList.add("hidden");
+  renderProducts();
+  btnUnload(submitBtn); hideLoading();
 });
 
 // -- Dashboard render -------------------------------------------------------

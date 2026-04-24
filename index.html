@@ -151,10 +151,12 @@
         <form id="product-form">
           <input name="prod_name" placeholder="Nome do produto" required>
           <input name="prod_price" type="number" step="0.01" placeholder="Preço (R$)" required>
+          <input name="prod_print_time" type="number" step="0.1" min="0" placeholder="Tempo de impressão (horas, opcional)">
           <label style="color:var(--muted);font-size:13px;margin-top:4px">Foto (opcional)</label>
           <input name="prod_photo" type="file" accept="image/*" multiple>
           <label style="color:var(--muted);font-size:13px;margin-top:8px">Filamentos utilizados (apenas para exibição)</label>
           <div id="product-usage-items"></div>
+          <div id="product-total-grams" style="font-size:13px;color:var(--muted);margin:4px 0 8px">Total utilizado: 0 g</div>
           <button type="submit" id="product-form-submit" style="margin-top:8px">Salvar produto</button>
         </form>
       </div>
@@ -239,6 +241,27 @@
       <img id="lightbox-img" src="" alt="">
       <button id="lightbox-next">›</button>
       <div id="lightbox-dots"></div>
+    </div>
+  </div>
+
+  <!-- Modal de edição de produto -->
+  <div id="product-edit-modal" class="modal-overlay hidden">
+    <div class="modal-card card">
+      <h3 class="modal-title">Editar Produto</h3>
+      <form id="product-edit-form">
+        <input id="edit-prod-name" placeholder="Nome do produto" required>
+        <input id="edit-prod-price" type="number" step="0.01" placeholder="Preço (R$)" required>
+        <input id="edit-prod-print-time" type="number" step="0.1" min="0" placeholder="Tempo de impressão (horas, opcional)">
+        <label style="color:var(--muted);font-size:13px;margin-top:4px">Nova foto (opcional — substitui a atual)</label>
+        <input id="edit-prod-photo" type="file" accept="image/*" multiple>
+        <label style="color:var(--muted);font-size:13px;margin-top:8px">Filamentos utilizados</label>
+        <div id="edit-prod-usage-items"></div>
+        <div id="edit-prod-total-grams" style="font-size:13px;color:var(--muted);margin:4px 0 8px">Total: 0 g</div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button type="submit" id="edit-prod-submit">Salvar alterações</button>
+          <button type="button" id="product-edit-cancel" class="btn-ghost">Cancelar</button>
+        </div>
+      </form>
     </div>
   </div>
 

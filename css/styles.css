@@ -256,11 +256,14 @@ button[type="submit"].btn-loading::after{border-top-color:#04101e}
   display:block;font-weight:600;margin-bottom:2px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-/* on very narrow screens, push actions below info */
-#products-list .item{flex-wrap:wrap}
-#products-list .item-info{min-width:120px}
+/* product item: collapsible actions on click */
+.product-item{flex-wrap:wrap;cursor:pointer;user-select:none}
+.product-item .item-info{min-width:120px}
+.product-item .item-actions{display:none;width:100%;margin-top:10px;justify-content:flex-start}
+.product-item.expanded .item-actions{display:flex}
+.product-item .item-actions button{flex:1 1 calc(50% - 4px);min-width:110px}
 .item-actions{
-  display:flex;gap:4px;flex-shrink:0;
+  display:flex;gap:6px;flex-shrink:0;
   flex-wrap:wrap;justify-content:flex-end;align-items:center;
 }
 .item-actions button{padding:7px 12px;font-size:13px;margin:0}
