@@ -282,6 +282,29 @@ function toBase64(file) {
   return new Promise(function(res, rej) { var r = new FileReader(); r.onload = function() { res(r.result); }; r.onerror = rej; r.readAsDataURL(file); });
 }
 
+async function compressImage(file, maxPx, quality) {
+  maxPx = maxPx || 1200; quality = quality || 0.82;
+  return new Promise(function(resolve) {
+    if (!file.type.startsWith("image/")) { resolve(file); return; }
+    var img = new Image();
+    var url = URL.createObjectURL(file);
+    img.onload = function() {
+      URL.revokeObjectURL(url);
+      var w = img.width, h = img.height;
+      if (w <= maxPx && h <= maxPx) { resolve(file); return; }
+      var scale = Math.min(maxPx / w, maxPx / h);
+      var canvas = document.createElement("canvas");
+      canvas.width = Math.round(w * scale); canvas.height = Math.round(h * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(function(blob) {
+        resolve(blob ? new File([blob], file.name, { type: "image/jpeg" }) : file);
+      }, "image/jpeg", quality);
+    };
+    img.onerror = function() { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
 async function uploadFiles(files, bucket) {
   if (!files || !files.length) return null;
   if (!sb) throw new Error("Supabase não está configurado. A foto não pode ser enviada.");
@@ -289,6 +312,7 @@ async function uploadFiles(files, bucket) {
   for (var i = 0; i < files.length; i++) {
     var file = files[i];
     if (!file || !file.size) continue;
+    file = await compressImage(file);
     var uuid = (crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + "-" + i + "-" + Math.random().toString(36).slice(2));
     var fn = uuid + "-" + file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
     var up = await sb.storage.from(bucket).upload(fn, file, { cacheControl: "3600", upsert: true });
@@ -832,7 +856,7 @@ function renderProducts() {
     var filChipsHtml = "";
     if (p.filaments_info) {
       var filArr = []; try { filArr = JSON.parse(p.filaments_info); } catch(e) {}
-      if (filArr.length) filChipsHtml = "<div class='fil-chips'>" + filArr.map(function(f) { return "<span class='fil-chip'>" + (f.name || "") + ": " + (f.qty || 0) + "g</span>"; }).join("") + "</div>";
+      if (filArr.length) filChipsHtml = "<div class='fil-chips'>" + filArr.map(function(f) { return "<span class='fil-chip'>" + (f.color || f.name || "") + ": " + (f.qty || 0) + "g</span>"; }).join("") + "</div>";
     }
     info.innerHTML = "<strong>" + p.name + "</strong><div class='muted'>R$ " + parseFloat(p.price || 0).toFixed(2) + "</div>" + filChipsHtml;
     var acts = document.createElement("div"); acts.className = "item-actions";
@@ -868,6 +892,19 @@ function renderProducts() {
       showSection("sec-sales-register"); prepSaleForm();
       document.querySelector("[name='product_name']").value = pCopy.name;
       document.querySelector("[name='price']").value = pCopy.price || "";
+      // auto-fill filaments from product
+      var prodFil = []; try { prodFil = pCopy.filaments_info ? JSON.parse(pCopy.filaments_info) : []; } catch(e) {}
+      if (prodFil.length) {
+        usageItems.innerHTML = "";
+        prodFil.forEach(function(f) {
+          addUsageRow();
+          var lastRow = usageItems.lastElementChild;
+          var s = lastRow.querySelector("select"); var q = lastRow.querySelector("input");
+          if (s) s.value = f.filament_id || f.name || "";
+          if (q) q.value = f.qty || "";
+        });
+        addUsageRow(); updateDelVisibility();
+      }
       hideLoading();
     };
 
@@ -890,6 +927,13 @@ function renderProducts() {
     var editBtn = document.createElement("button"); editBtn.textContent = "Editar";
     editBtn.onclick = function(e) { e.stopPropagation(); openProductEdit(pCopy); };
 
+    var dupBtn = document.createElement("button"); dupBtn.textContent = "Duplicar";
+    dupBtn.title = "Cria uma cópia deste produto para ajustar quantidades";
+    dupBtn.onclick = function(e) {
+      e.stopPropagation();
+      openProductEdit(Object.assign({}, pCopy, { id: null, name: pCopy.name + " (cópia)" }));
+    };
+
     var delBtn = document.createElement("button"); delBtn.textContent = "Remover";
     delBtn.onclick = async function() {
       if (!confirm("Remover \"" + pCopy.name + "\"?")) return;
@@ -904,7 +948,7 @@ function renderProducts() {
       }
     };
 
-    acts.appendChild(prontaBtn); acts.appendChild(venderBtn); acts.appendChild(encomendar); acts.appendChild(editBtn); acts.appendChild(delBtn);
+    acts.appendChild(prontaBtn); acts.appendChild(venderBtn); acts.appendChild(encomendar); acts.appendChild(editBtn); acts.appendChild(dupBtn); acts.appendChild(delBtn);
     d.appendChild(img); d.appendChild(info); d.appendChild(acts);
     el.appendChild(d);
   });
@@ -1082,9 +1126,16 @@ document.getElementById("product-edit-form").addEventListener("submit", async fu
     var { error } = await sb.from("products").update(updates).eq("id", _editProdId);
     if (error) { showError("Erro ao atualizar produto.", error); btnUnload(submitBtn); hideLoading(); return; }
     await fetchProducts();
+  } else if (sb && !_editProdId) {
+    // duplicate: insert as new
+    var { error: insErr } = await sb.from("products").insert(updates);
+    if (insErr) { showError("Erro ao duplicar produto.", insErr); btnUnload(submitBtn); hideLoading(); return; }
+    await fetchProducts();
   } else {
     var idx = localDB.products.findIndex(function(x){return x.id===_editProdId;});
-    if (idx>=0){Object.assign(localDB.products[idx], updates);localDB.save();}
+    if (_editProdId && idx>=0) { Object.assign(localDB.products[idx], updates); }
+    else { updates.id = "local-" + Date.now(); localDB.products.push(updates); }
+    localDB.save();
   }
   document.getElementById("product-edit-modal").classList.add("hidden");
   renderProducts();
