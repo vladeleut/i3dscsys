@@ -16,8 +16,11 @@ create table if not exists products (
   name text,
   price numeric,
   photo text,
+  filaments_info text, -- JSON: [{"filament_id":"uuid","name":"PLA Branco","color":"Branco","qty":50}]
   inserted_at timestamptz default now()
 );
+-- Migracao (execute se a tabela ja existia):
+-- alter table products add column if not exists filaments_info text;
 
 -- Vendas
 create table if not exists sales (

@@ -69,6 +69,12 @@ function showSection(id) {
   });
 }
 
+// Navega para uma seção ativando seu botão de nav (reaproveita lógica de render do click handler)
+function navTo(secId) {
+  var btn = appNav ? appNav.querySelector("[data-sec='" + secId + "']") : null;
+  if (btn) { btn.click(); } else { showSection(secId); }
+}
+
 // -- Auth --------------------------------------------------------------------
 const authDiv  = document.getElementById("auth");
 const appEl    = document.getElementById("app");
@@ -370,7 +376,7 @@ function renderFilamentsList() {
   var rows = localDB.filaments.filter(function(f) { var k = f.id || f.name; if (seen.has(k)) return false; seen.add(k); return true; }).filter(function(f) {
     if (!q) return true;
     return (f.name||"").toLowerCase().includes(q)||(f.color||"").toLowerCase().includes(q)||(f.manufacturer||"").toLowerCase().includes(q);
-  });
+  }).sort(function(a, b) { return (a.name||"").localeCompare(b.name||"", "pt-BR", {sensitivity:"base"}); });
   if (!rows.length && localDB.filaments.length) { el.innerHTML = "<p class='muted' style='padding:10px 0'>Nenhum resultado para \"" + q + "\".</p>"; return; }
   rows.forEach(function(f) {
     var isLow = (parseFloat(f.quantity) || 0) < LOW_STOCK_THRESHOLD;
@@ -778,11 +784,37 @@ function renderProducts() {
       if (u) { img.src = u; img.onclick = function() { resolveAllPhotoUrls(pPhoto, pBucket).then(function(urls) { openLightbox(urls, 0); }); }; }
     }).catch(function() {});
     var info = document.createElement("div"); info.className = "item-info";
-    info.innerHTML = "<strong>" + p.name + "</strong><div class='muted'>R$ " + parseFloat(p.price || 0).toFixed(2) + "</div>";
+    var filChipsHtml = "";
+    if (p.filaments_info) {
+      var filArr = []; try { filArr = JSON.parse(p.filaments_info); } catch(e) {}
+      if (filArr.length) filChipsHtml = "<div class='fil-chips'>" + filArr.map(function(f) { return "<span class='fil-chip'>" + (f.name || "") + ": " + (f.qty || 0) + "g</span>"; }).join("") + "</div>";
+    }
+    info.innerHTML = "<strong>" + p.name + "</strong><div class='muted'>R$ " + parseFloat(p.price || 0).toFixed(2) + "</div>" + filChipsHtml;
     var acts = document.createElement("div"); acts.className = "item-actions";
     var pCopy = p;
 
-    var venderBtn = document.createElement("button"); venderBtn.textContent = "Vender";
+    var prontaBtn = document.createElement("button"); prontaBtn.textContent = "Peça pronta";
+    prontaBtn.title = "Registrar venda de peça já impressa \u2014 estoque não é alterado";
+    prontaBtn.onclick = async function() {
+      if (!confirm("Registrar venda de \"" + pCopy.name + "\" (R$ " + parseFloat(pCopy.price || 0).toFixed(2) + ")? O estoque NÃO será alterado.")) return;
+      btnLoad(prontaBtn); showLoading(); await yieldUI();
+      if (sb) {
+        var ins = await sb.from("sales").insert({ product_name: pCopy.name, price: pCopy.price || 0, notes: "Peça pronta", created_at: new Date().toISOString() }).select().single();
+        if (ins.error) {
+          var ins2 = await sb.from("sales").insert({ product_name: pCopy.name, price: pCopy.price || 0, created_at: new Date().toISOString() }).select().single();
+          if (ins2.error) { showError("Erro ao registrar venda.", ins2.error); hideLoading(); btnUnload(prontaBtn); return; }
+        }
+        await fetchSales();
+      } else {
+        localDB.sales.push({ product_name: pCopy.name, price: pCopy.price || 0, notes: "Peça pronta", created_at: new Date().toISOString() });
+        localDB.save();
+      }
+      hideLoading(); btnUnload(prontaBtn);
+      alert("Venda registrada! Estoque não alterado.");
+    };
+
+    var venderBtn = document.createElement("button"); venderBtn.textContent = "Imprimir e vender";
+    venderBtn.title = "Preenche o formulário de venda \u2014 dá baixa no estoque ao confirmar";
     venderBtn.onclick = async function() {
       btnLoad(venderBtn); showLoading(); await yieldUI();
       await fetchFilaments();
@@ -836,11 +868,85 @@ function renderProducts() {
       }
     };
 
-    acts.appendChild(venderBtn); acts.appendChild(encomendar); acts.appendChild(editBtn); acts.appendChild(delBtn);
+    acts.appendChild(prontaBtn); acts.appendChild(venderBtn); acts.appendChild(encomendar); acts.appendChild(editBtn); acts.appendChild(delBtn);
     d.appendChild(img); d.appendChild(info); d.appendChild(acts);
     el.appendChild(d);
   });
 }
+
+// -- Product catalog form --------------------------------------------------
+function addProductUsageRow() {
+  var container = document.getElementById("product-usage-items");
+  var row = document.createElement("div"); row.className = "usage-row";
+  var sel = document.createElement("select"); sel.style.flex = "1";
+  var qty = document.createElement("input"); qty.type = "number"; qty.step = "0.1"; qty.placeholder = "g utilizado"; qty.style.width = "110px";
+  var delBtn = document.createElement("button"); delBtn.type = "button"; delBtn.innerHTML = trashIcon();
+  var placeholder = document.createElement("option"); placeholder.value = ""; placeholder.text = "Escolha filamento"; sel.appendChild(placeholder);
+  var seen = new Set();
+  localDB.filaments.sort(function(a,b){return (a.name||"").localeCompare(b.name||"","pt-BR",{sensitivity:"base"});}).forEach(function(f) {
+    var key = f.id || f.name; if (seen.has(key)) return; seen.add(key);
+    var o = document.createElement("option");
+    o.value = f.id || f.name;
+    o.text = f.name + " \u2014 " + (f.color || "?") + " (" + (f.quantity || 0) + "g)";
+    sel.appendChild(o);
+  });
+  sel.addEventListener("change", function() {
+    if (sel.value && container.lastElementChild === row) addProductUsageRow();
+    updateProductDelVisibility();
+  });
+  delBtn.onclick = function() { row.remove(); updateProductDelVisibility(); };
+  row.appendChild(sel); row.appendChild(qty); row.appendChild(delBtn);
+  container.appendChild(row);
+  updateProductDelVisibility();
+}
+
+function updateProductDelVisibility() {
+  var rows = document.querySelectorAll("#product-usage-items .usage-row");
+  rows.forEach(function(r) { var b = r.querySelector("button"); if (b) b.style.display = rows.length > 1 ? "inline-block" : "none"; });
+}
+
+document.getElementById("product-form-toggle").addEventListener("click", function() {
+  var wrap = document.getElementById("product-form-wrap");
+  var nowHidden = wrap.classList.toggle("hidden");
+  this.textContent = nowHidden ? "+ Cadastrar produto" : "\u2715 Cancelar cadastro";
+  if (!nowHidden && !document.getElementById("product-usage-items").children.length) addProductUsageRow();
+});
+
+document.getElementById("product-form").addEventListener("submit", async function(e) {
+  e.preventDefault();
+  var submitBtn = document.getElementById("product-form-submit");
+  btnLoad(submitBtn); showLoading(); await yieldUI();
+  var name = e.target.prod_name.value.trim();
+  var price = parseFloat(e.target.prod_price.value) || 0;
+  var filInfo = [];
+  document.querySelectorAll("#product-usage-items .usage-row").forEach(function(row) {
+    var sel = row.querySelector("select"); var qty = row.querySelector("input");
+    if (!sel || !sel.value || !qty || !qty.value) return;
+    var fil = localDB.filaments.find(function(f) { return f.id === sel.value || f.name === sel.value; });
+    filInfo.push({ filament_id: sel.value, name: fil ? fil.name : sel.value, color: fil ? (fil.color || "") : "", qty: parseFloat(qty.value) || 0 });
+  });
+  var photoFiles = e.target.prod_photo.files;
+  var photoVal = null;
+  if (photoFiles && photoFiles.length) { photoVal = await uploadFiles(photoFiles, "product-photos"); }
+  var obj = { name: name, price: price, filaments_info: filInfo.length ? JSON.stringify(filInfo) : null };
+  if (photoVal) obj.photo = photoVal;
+  if (sb) {
+    var { error } = await sb.from("products").insert(obj);
+    if (error) { showError("Erro ao salvar produto.", error); hideLoading(); btnUnload(submitBtn); return; }
+    await fetchProducts();
+  } else {
+    obj.id = "local-" + Date.now();
+    localDB.products.push(obj); localDB.save();
+  }
+  e.target.reset();
+  document.getElementById("product-usage-items").innerHTML = "";
+  addProductUsageRow();
+  document.getElementById("product-form-wrap").classList.add("hidden");
+  document.getElementById("product-form-toggle").textContent = "+ Cadastrar produto";
+  hideLoading(); btnUnload(submitBtn);
+  renderProducts();
+  alert("Produto cadastrado!");
+});
 
 // -- Dashboard render -------------------------------------------------------
 function getPeriodSales() {
@@ -870,18 +976,22 @@ function renderDashboard() {
   if (greeting) greeting.innerHTML = "<span class='highlight'>" + greet + "</span>\u00a0<span class='wave'>\uD83D\uDC4B</span>";
 
   var pLabel = { hoje: "hoje", semana: "\u00faltimos 7 dias", mes: "\u00faltimos 30 dias", total: "total" }[dashPeriod] || "total";
+  var catalogCount = (localDB.products || []).length;
   var stats = [
-    { icon: "\uD83D\uDCB0", value: fmtMoney(totalRevenue), label: "Receita \u2014 " + pLabel },
-    { icon: "\uD83D\uDCE6", value: String(totalSales),     label: "Pe\u00e7as \u2014 " + pLabel },
-    { icon: "\uD83E\uDDF5", value: currentStock.toFixed(0) + "\u00a0g", label: "Estoque atual" },
-    { icon: "\uD83D\uDCCB", value: String(pendingOrders),  label: "Encomendas pendentes" }
+    { icon: "\uD83D\uDCB0", value: fmtMoney(totalRevenue), label: "Receita \u2014 " + pLabel,     sec: "sec-sales-list" },
+    { icon: "\uD83D\uDCE6", value: String(totalSales),     label: "Pe\u00e7as \u2014 " + pLabel,     sec: "sec-sales-list" },
+    { icon: "\uD83E\uDDF5", value: currentStock.toFixed(0) + "\u00a0g", label: "Estoque atual",    sec: "sec-filaments-list" },
+    { icon: "\uD83D\uDCCB", value: String(pendingOrders),  label: "Encomendas pendentes",          sec: "sec-orders" },
+    { icon: "\uD83D\uDDC2\uFE0F", value: String(catalogCount), label: "Produtos no cat\u00e1logo", sec: "sec-products" }
   ];
   var grid = document.getElementById("stats-grid");
   if (grid) {
     grid.innerHTML = "";
-    stats.forEach(function(s) {
+    stats.forEach(function(s, i) {
       var c = document.createElement("div"); c.className = "stat-card";
+      if (i === stats.length - 1 && stats.length % 2 !== 0) c.style.gridColumn = "span 2";
       c.innerHTML = "<div class='stat-icon'>" + s.icon + "</div><div class='stat-value'>" + s.value + "</div><div class='stat-label'>" + s.label + "</div>";
+      c.onclick = function() { navTo(s.sec); };
       grid.appendChild(c);
     });
   }
