@@ -35,21 +35,17 @@
       <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
       Estoque
     </button>
-    <button data-sec="sec-sales-register">
+    <button data-sec="sec-sales-hub">
       <svg viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
-      Vender
-    </button>
-    <button data-sec="sec-sales-list">
-      <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
       Vendas
     </button>
     <button data-sec="sec-products">
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
       Catálogo
     </button>
-    <button data-sec="sec-orders">
-      <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-      Pedidos
+    <button data-sec="sec-customers">
+      <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Clientes
     </button>
   </nav>
 
@@ -69,6 +65,32 @@
       <div class="card" style="margin-top:14px">
         <p class="dash-subtitle">Últimas vendas</p>
         <div id="recent-sales-list"></div>
+      </div>
+    </section>
+
+    <!-- HUB de vendas -->
+    <section id="sec-sales-hub" class="section hidden">
+      <div class="hub-grid">
+        <div class="hub-card" id="hub-go-sell">
+          <div class="hub-icon">🛒</div>
+          <div class="hub-label">Registrar Venda</div>
+          <div class="hub-sub">Dá baixa no estoque</div>
+        </div>
+        <div class="hub-card" id="hub-go-sales">
+          <div class="hub-icon">📊</div>
+          <div class="hub-label">Histórico</div>
+          <div class="hub-sub">Vendas registradas</div>
+        </div>
+        <div class="hub-card" id="hub-go-orders">
+          <div class="hub-icon">📋</div>
+          <div class="hub-label">Encomendas</div>
+          <div class="hub-sub">Pedidos pendentes e novo pedido</div>
+        </div>
+        <div class="hub-card" id="hub-go-customers">
+          <div class="hub-icon">👥</div>
+          <div class="hub-label">Clientes</div>
+          <div class="hub-sub">Histórico e contatos</div>
+        </div>
       </div>
     </section>
 
@@ -145,7 +167,15 @@
       <div class="card">
         <h2>Nova Encomenda</h2>
         <form id="order-form">
-          <input name="product_name" placeholder="Nome do produto" required>
+          <label style="color:var(--muted);font-size:13px">Cliente</label>
+          <select id="order-customer-sel">
+            <option value="">Selecione o cliente…</option>
+          </select>
+          <div id="order-new-customer-fields" class="hidden" style="margin-top:6px">
+            <input id="order-new-cust-name" placeholder="Nome do novo cliente" >
+            <input id="order-new-cust-contact" placeholder="Contato (WhatsApp, email…)">
+          </div>
+          <input name="product_name" placeholder="Nome do produto" required style="margin-top:8px">
           <input name="price" type="number" step="0.01" placeholder="Preço estimado (BRL)" required>
           <textarea name="notes" rows="2" placeholder="Observações (opcional)"></textarea>
           <label style="color:var(--muted);font-size:14px;margin-top:8px">Filamentos necessários</label>
@@ -157,6 +187,23 @@
         <h2>Encomendas Pendentes</h2>
         <input id="orders-search" type="search" class="search-box" placeholder="Buscar encomenda…">
         <div id="orders-list"></div>
+      </div>
+    </section>
+
+    <section id="sec-customers" class="section hidden">
+      <div class="card">
+        <h2>Novo Cliente</h2>
+        <form id="new-customer-form">
+          <input id="new-cust-name" placeholder="Nome do cliente" required>
+          <input id="new-cust-contact" placeholder="Contato (WhatsApp, email…)">
+          <textarea id="new-cust-notes" placeholder="Observações (opcional)" rows="2" style="resize:vertical"></textarea>
+          <button type="submit" id="new-cust-submit">Cadastrar Cliente</button>
+        </form>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h2>Clientes</h2>
+        <input id="customers-search" type="search" class="search-box" placeholder="Buscar cliente…">
+        <div id="customers-list"></div>
       </div>
     </section>
 
@@ -209,6 +256,21 @@
         <div style="display:flex;gap:10px;margin-top:12px">
           <button type="submit" id="edit-fil-submit">Salvar</button>
           <button type="button" id="filament-edit-cancel" class="btn-ghost">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="customer-edit-modal" class="modal-overlay hidden">
+    <div class="modal-card card">
+      <h3 class="modal-title">Editar Cliente</h3>
+      <form id="customer-edit-form">
+        <input id="edit-cust-name" placeholder="Nome do cliente" required>
+        <input id="edit-cust-contact" placeholder="Contato (WhatsApp, e-mail…)">
+        <textarea id="edit-cust-notes" placeholder="Observações" rows="3" style="resize:vertical"></textarea>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button type="submit" id="edit-cust-submit">Salvar</button>
+          <button type="button" id="customer-edit-cancel" class="btn-ghost">Cancelar</button>
         </div>
       </form>
     </div>

@@ -107,6 +107,12 @@ body::after{
 .app-nav button.active{color:var(--a1)}
 .app-nav button.active svg{filter:drop-shadow(0 0 5px rgba(0,210,255,.5))}
 .app-nav button:active:not(.btn-loading){transform:scale(.88)}
+/* 6 botões no mobile: scroll horizontal se necessario */
+@media(max-width:420px){
+  .app-nav{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .app-nav::-webkit-scrollbar{display:none}
+  .app-nav button{flex:none;min-width:58px}
+}
 
 /* === DESKTOP NAV === */
 @media(min-width:800px){
@@ -420,6 +426,62 @@ button[type="submit"].btn-loading::after{border-top-color:#04101e}
 @media(max-width:600px){
   #lightbox-prev{left:-44px}#lightbox-next{right:-44px}
 }
+
+/* === CUSTOMERS === */
+.customer-item .item-info{flex:1}
+.wa-link{color:var(--a1);text-decoration:none;font-size:13px}
+.wa-link:hover{text-decoration:underline}
+.cust-badge-pending{
+  display:inline-block;padding:2px 8px;
+  font-size:11px;font-weight:700;border-radius:20px;
+  background:rgba(245,160,10,.15);border:1px solid rgba(245,160,10,.35);
+  color:#f5a00a;
+}
+.cust-badge-ok{
+  display:inline-block;padding:2px 8px;
+  font-size:11px;font-weight:700;border-radius:20px;
+  background:rgba(10,245,196,.1);border:1px solid rgba(10,245,196,.25);
+  color:#0af5c4;
+}
+.cust-orders{margin-top:8px;display:flex;flex-direction:column;gap:3px}
+.cust-order-row{
+  display:flex;justify-content:space-between;
+  font-size:12px;color:var(--muted);
+  padding:3px 8px;
+  background:rgba(255,255,255,.04);border-radius:6px;
+}
+
+/* === SALES HUB === */
+.hub-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:14px;
+  padding:8px 0;
+}
+.hub-card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:var(--r);
+  padding:28px 16px 22px;
+  text-align:center;
+  cursor:pointer;
+  backdrop-filter:blur(8px);
+  transition:border-color .2s,box-shadow .2s,transform .15s;
+  animation:fadeUp .22s ease both;
+}
+.hub-card:hover{
+  border-color:rgba(0,210,255,.35);
+  box-shadow:0 4px 32px rgba(0,210,255,.12);
+  transform:translateY(-3px);
+}
+.hub-card:active{transform:scale(.95)}
+.hub-card-full{grid-column:span 2}
+.hub-icon{font-size:36px;line-height:1;margin-bottom:12px}
+.hub-label{
+  font-size:16px;font-weight:700;
+  background:linear-gradient(110deg,var(--a1),var(--a2));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;margin-bottom:5px;
+}
+.hub-sub{font-size:12px;color:var(--muted)}
 
 /* === EDIT MODAL === */
 .modal-overlay{

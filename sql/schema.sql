@@ -39,15 +39,31 @@ create table if not exists sale_items (
   qty_used numeric
 );
 
+-- Clientes
+create table if not exists customers (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  contact text,
+  notes text,
+  created_at timestamptz default now()
+);
+
+alter table customers enable row level security;
+create policy "customers_auth" on customers for all to authenticated using (true) with check (true);
+
 -- Encomendas (ordens de serviço pendentes)
 create table if not exists orders (
   id uuid primary key default gen_random_uuid(),
+  customer_id uuid references customers(id) on delete set null,
   product_name text not null,
   price numeric not null default 0,
   notes text,
   status text not null default 'pendente',
   created_at timestamptz default now()
 );
+-- Migracao (execute se a tabela ja existia):
+-- alter table orders add column if not exists customer_id uuid references customers(id) on delete set null;
+-- (Se tiver colunas customer_name/customer_contact antigas, podem ser removidas após migrar dados)
 
 -- Itens da encomenda (filamentos necessários, sem deduzir estoque)
 create table if not exists order_items (

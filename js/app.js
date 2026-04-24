@@ -19,6 +19,7 @@ const localDB = {
   sale_items:  JSON.parse(localStorage.getItem("sale_items")  || "[]"),
   orders:      JSON.parse(localStorage.getItem("orders")      || "[]"),
   order_items: JSON.parse(localStorage.getItem("order_items") || "[]"),
+  customers:   JSON.parse(localStorage.getItem("customers")   || "[]"),
   save() {
     // Remove base64 photos before persisting — they're huge and already estão no Supabase
     var noB64 = function(arr) {
@@ -34,6 +35,7 @@ const localDB = {
       localStorage.setItem("sale_items",  JSON.stringify(this.sale_items));
       localStorage.setItem("orders",      JSON.stringify(this.orders));
       localStorage.setItem("order_items", JSON.stringify(this.order_items));
+      localStorage.setItem("customers",   JSON.stringify(this.customers));
     } catch(e) {
       console.warn("localStorage cheio, dados apenas em memória esta sessão:", e.message);
     }
@@ -56,10 +58,12 @@ const ALL_SECTIONS = [
   "sec-dashboard",
   "sec-filaments-register",
   "sec-filaments-list",
+  "sec-sales-hub",
   "sec-sales-register",
   "sec-sales-list",
   "sec-products",
-  "sec-orders"
+  "sec-orders",
+  "sec-customers"
 ];
 
 function showSection(id) {
@@ -74,6 +78,26 @@ function navTo(secId) {
   var btn = appNav ? appNav.querySelector("[data-sec='" + secId + "']") : null;
   if (btn) { btn.click(); } else { showSection(secId); }
 }
+
+// -- Sales hub wiring ------------------------------------------------------
+function hubNavActive() {
+  appNav.querySelectorAll("button[data-sec]").forEach(function(b) { b.classList.remove("active"); });
+  var hb = appNav ? appNav.querySelector("[data-sec='sec-sales-hub']") : null; if (hb) hb.classList.add("active");
+}
+document.getElementById("hub-go-sell").addEventListener("click", async function() {
+  showLoading(); await fetchFilaments(); hubNavActive(); prepSaleForm(); hideLoading(); showSection("sec-sales-register");
+});
+document.getElementById("hub-go-sales").addEventListener("click", async function() {
+  showLoading(); await refreshAll(); renderSales(); hubNavActive(); hideLoading(); showSection("sec-sales-list");
+});
+document.getElementById("hub-go-orders").addEventListener("click", async function() {
+  showLoading(); await fetchFilaments(); await fetchOrders(); await fetchOrderItems();
+  hubNavActive(); prepOrderForm(); renderOrders(); hideLoading(); showSection("sec-orders");
+});
+document.getElementById("hub-go-customers").addEventListener("click", async function() {
+  showLoading(); await fetchCustomers(); await fetchOrders();
+  hubNavActive(); renderCustomers(); hideLoading(); showSection("sec-customers");
+});
 
 // -- Auth --------------------------------------------------------------------
 const authDiv  = document.getElementById("auth");
@@ -176,6 +200,8 @@ if (appNav) {
       if (secId === "sec-dashboard") {
         await refreshAll();
         renderDashboard();
+      } else if (secId === "sec-sales-hub") {
+        // hub only shows cards, no fetch needed
       } else if (secId === "sec-filaments-list") {
         await fetchFilaments();
         renderFilamentsList();
@@ -188,6 +214,9 @@ if (appNav) {
       } else if (secId === "sec-products") {
         await fetchProducts();
         renderProducts();
+      } else if (secId === "sec-customers") {
+        await fetchCustomers();
+        renderCustomers();
       } else if (secId === "sec-orders") {
         await fetchFilaments();
         await fetchOrders();
@@ -226,6 +255,12 @@ async function fetchSaleItems() {
   if (!error && data) { localDB.sale_items = data; localDB.save(); }
 }
 
+async function fetchCustomers() {
+  if (!sb) return;
+  const { data, error } = await sb.from("customers").select("*");
+  if (!error && data) { localDB.customers = data; localDB.save(); }
+}
+
 async function fetchOrders() {
   if (!sb) return;
   const { data, error } = await sb.from("orders").select("*");
@@ -239,7 +274,7 @@ async function fetchOrderItems() {
 }
 
 async function refreshAll() {
-  await Promise.all([fetchFilaments(), fetchSales(), fetchProducts(), fetchSaleItems(), fetchOrders(), fetchOrderItems()]);
+  await Promise.all([fetchFilaments(), fetchSales(), fetchProducts(), fetchSaleItems(), fetchOrders(), fetchOrderItems(), fetchCustomers()]);
 }
 
 // -- Helpers ------------------------------------------------------------------
@@ -1033,6 +1068,22 @@ function prepOrderForm() {
   if (!el) return;
   el.innerHTML = "";
   addOrderUsageRow();
+  // Populate customer selector
+  var sel = document.getElementById("order-customer-sel");
+  if (!sel) return;
+  sel.innerHTML = "<option value=''>Selecione o cliente…</option>";
+  var sorted = (localDB.customers || []).slice().sort(function(a,b){return (a.name||"").localeCompare(b.name||"","pt-BR",{sensitivity:"base"});});
+  sorted.forEach(function(c) {
+    var o = document.createElement("option"); o.value = c.id;
+    o.textContent = c.name + (c.contact ? " ("+c.contact+")" : "");
+    sel.appendChild(o);
+  });
+  var newOpt = document.createElement("option"); newOpt.value = "__new__"; newOpt.textContent = "+ Novo cliente…";
+  sel.appendChild(newOpt);
+  sel.onchange = function() {
+    var wrap = document.getElementById("order-new-customer-fields");
+    if (wrap) wrap.classList.toggle("hidden", sel.value !== "__new__");
+  };
 }
 
 function addOrderUsageRow() {
@@ -1076,6 +1127,27 @@ document.getElementById("order-form").addEventListener("submit", async function(
   var price = parseFloat(fd.get("price")) || 0;
   var notes = fd.get("notes") || "";
   var container = document.getElementById("order-usage-items");
+  // Resolve customer_id
+  var selEl = document.getElementById("order-customer-sel");
+  var selectedCustId = selEl ? selEl.value : "";
+  var customer_id = null;
+  if (selectedCustId === "__new__") {
+    var newName = (document.getElementById("order-new-cust-name") || {}).value || "";
+    var newContact = (document.getElementById("order-new-cust-contact") || {}).value || "";
+    if (!newName.trim()) { hideLoading(); btnUnload(submitBtn); alert("Preencha o nome do novo cliente."); return; }
+    if (sb) {
+      var custIns = await sb.from("customers").insert({ name: newName.trim(), contact: newContact.trim() }).select().single();
+      if (custIns.error) { showError("Erro ao criar cliente.", custIns.error); hideLoading(); btnUnload(submitBtn); return; }
+      customer_id = custIns.data.id;
+      await fetchCustomers();
+    } else {
+      var newCust = { id: "local-cust-" + Date.now(), name: newName.trim(), contact: newContact.trim(), created_at: new Date().toISOString() };
+      localDB.customers.push(newCust); localDB.save();
+      customer_id = newCust.id;
+    }
+  } else if (selectedCustId) {
+    customer_id = selectedCustId;
+  }
   var usages = [];
   container.querySelectorAll("div").forEach(function(r) {
     var s = r.querySelector("select"); var q = r.querySelector("input");
@@ -1083,7 +1155,7 @@ document.getElementById("order-form").addEventListener("submit", async function(
   });
   if (!usages.length) { hideLoading(); btnUnload(submitBtn); alert("Selecione pelo menos um filamento."); return; }
   if (sb) {
-    var ins = await sb.from("orders").insert({ product_name: product_name, price: price, notes: notes, status: "pendente", created_at: new Date().toISOString() }).select().single();
+    var ins = await sb.from("orders").insert({ customer_id: customer_id, product_name: product_name, price: price, notes: notes, status: "pendente", created_at: new Date().toISOString() }).select().single();
     if (ins.error) { showError("Erro ao criar encomenda.", ins.error); hideLoading(); btnUnload(submitBtn); return; }
     var orderId = ins.data.id;
     for (var i = 0; i < usages.length; i++) {
@@ -1091,7 +1163,7 @@ document.getElementById("order-form").addEventListener("submit", async function(
     }
     await fetchOrders(); await fetchOrderItems();
   } else {
-    var order = { id: "local-" + Date.now(), product_name: product_name, price: price, notes: notes, status: "pendente", created_at: new Date().toISOString() };
+    var order = { id: "local-" + Date.now(), customer_id: customer_id, product_name: product_name, price: price, notes: notes, status: "pendente", created_at: new Date().toISOString() };
     localDB.orders.push(order);
     usages.forEach(function(u) { localDB.order_items.push({ order_id: order.id, filament_id: u.filament_id, qty_needed: u.qty_needed }); });
     localDB.save();
@@ -1137,6 +1209,23 @@ function renderOrders() {
     var badge = document.createElement("span"); badge.className = "status-badge pendente"; badge.textContent = "Pendente";
     header.appendChild(nameEl); header.appendChild(priceEl); header.appendChild(badge);
     div.appendChild(header);
+
+    // Cliente
+    if (order.customer_name) {
+      var customerEl = document.createElement("div"); customerEl.style.cssText = "font-size:13px;color:var(--muted);margin:4px 0 2px;display:flex;align-items:center;gap:6px";
+      var contactHtml = "";
+      if (order.customer_contact) {
+        var c = order.customer_contact;
+        var digits = c.replace(/\D/g, "");
+        if (digits.length >= 8) {
+          contactHtml = " &middot; <a href='https://wa.me/" + digits + "' target='_blank' rel='noopener' style='color:var(--a1);text-decoration:none'>\uD83D\uDCAC " + c + "</a>";
+        } else {
+          contactHtml = " &middot; " + c;
+        }
+      }
+      customerEl.innerHTML = "\uD83D\uDC64 <span>" + order.customer_name + contactHtml + "</span>";
+      div.appendChild(customerEl);
+    }
 
     if (items.length) {
       var filDiv = document.createElement("div"); filDiv.className = "order-filaments";
@@ -1241,12 +1330,139 @@ async function deleteOrder(orderId) {
   hideLoading();
 }
 
+// -- Customers render/edit -------------------------------------------------
+function renderCustomers() {
+  var el = document.getElementById("customers-list"); if (!el) return;
+  el.innerHTML = "";
+  var q = (document.getElementById("customers-search").value || "").toLowerCase().trim();
+  var rows = (localDB.customers || []).filter(function(c) {
+    if (!q) return true;
+    return (c.name||"").toLowerCase().includes(q)||(c.contact||"").toLowerCase().includes(q);
+  }).sort(function(a,b){return (a.name||"").localeCompare(b.name||"","pt-BR",{sensitivity:"base"});});
+  if (!rows.length) { el.innerHTML = "<p class='muted' style='padding:10px 0'>" + (q ? "Nenhum resultado para \"" + q + "\"." : "Nenhum cliente cadastrado.") + "</p>"; return; }
+  rows.forEach(function(customer) {
+    var pendingOrders = (localDB.orders || []).filter(function(o) { return o.customer_id === customer.id && o.status === "pendente"; });
+    var totalOrders   = (localDB.orders || []).filter(function(o) { return o.customer_id === customer.id; });
+    var totalValue    = totalOrders.reduce(function(s,o){return s+(parseFloat(o.price)||0);},0);
+    var div = document.createElement("div"); div.className = "item customer-item";
+    var info = document.createElement("div"); info.className = "item-info";
+    var contactHtml = "";
+    if (customer.contact) {
+      var digits = customer.contact.replace(/\D/g,"");
+      contactHtml = digits.length >= 8
+        ? "<a href='https://wa.me/" + digits + "' target='_blank' rel='noopener' class='wa-link'>💬 " + customer.contact + "</a>"
+        : customer.contact;
+    }
+    var badge = pendingOrders.length
+      ? "<span class='cust-badge-pending'>" + pendingOrders.length + " pendente" + (pendingOrders.length>1?"s":"") + "</span>"
+      : "<span class='cust-badge-ok'>Sem pendências</span>";
+    info.innerHTML = "<strong>" + customer.name + "</strong>" +
+      (contactHtml ? "<div class='muted' style='margin-top:3px'>" + contactHtml + "</div>" : "") +
+      "<div style='margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap'>" + badge +
+      "<span class='muted' style='font-size:12px'>" + totalOrders.length + " pedido" + (totalOrders.length!==1?"s":"") +
+      (totalValue>0?" &middot; R$ "+totalValue.toFixed(2):"") + "</span></div>";
+    if (pendingOrders.length) {
+      var ordHtml = "<div class='cust-orders'>";
+      pendingOrders.forEach(function(o) { ordHtml += "<div class='cust-order-row'><span>" + o.product_name + "</span><span class='muted'>R$ " + parseFloat(o.price).toFixed(2) + "</span></div>"; });
+      ordHtml += "</div>";
+      info.innerHTML += ordHtml;
+    }
+    if (customer.notes) info.innerHTML += "<div class='muted' style='font-size:12px;margin-top:4px'>" + customer.notes + "</div>";
+    var acts = document.createElement("div"); acts.className = "item-actions";
+    var cCopy = customer;
+    var editBtn = document.createElement("button"); editBtn.textContent = "Editar";
+    editBtn.onclick = function() { openCustomerEdit(cCopy); };
+    var delBtn = document.createElement("button"); delBtn.innerHTML = trashIcon(); delBtn.title = "Remover cliente";
+    delBtn.onclick = async function() {
+      if (!confirm("Remover \"" + cCopy.name + "\"? Encomendas vinculadas não serão apagadas.")) return;
+      if (sb) {
+        showLoading();
+        var { error } = await sb.from("customers").delete().eq("id", cCopy.id);
+        if (error) { showError("Erro ao remover cliente.", error); } else { await fetchCustomers(); renderCustomers(); }
+        hideLoading();
+      } else {
+        var idx = localDB.customers.findIndex(function(x){return x.id===cCopy.id;});
+        if (idx>=0){localDB.customers.splice(idx,1);localDB.save();}
+        renderCustomers();
+      }
+    };
+    acts.appendChild(editBtn); acts.appendChild(delBtn);
+    div.appendChild(info); div.appendChild(acts);
+    el.appendChild(div);
+  });
+}
+
+document.getElementById("new-customer-form").addEventListener("submit", async function(e) {
+  e.preventDefault();
+  var submitBtn = document.getElementById("new-cust-submit");
+  btnLoad(submitBtn); showLoading(); await yieldUI();
+  var payload = {
+    name:    document.getElementById("new-cust-name").value.trim(),
+    contact: document.getElementById("new-cust-contact").value.trim() || null,
+    notes:   document.getElementById("new-cust-notes").value.trim() || null
+  };
+  if (!payload.name) { btnReset(submitBtn, "Cadastrar Cliente"); hideLoading(); return; }
+  if (sb) {
+    var { data, error } = await sb.from("customers").insert(payload).select().single();
+    if (error) { showError("Erro ao cadastrar cliente.", error); btnReset(submitBtn, "Cadastrar Cliente"); hideLoading(); return; }
+    localDB.customers = localDB.customers || [];
+    localDB.customers.push(data);
+    localDB.save();
+  } else {
+    var nc = Object.assign({id: crypto.randomUUID ? crypto.randomUUID() : Date.now()+"", created_at: new Date().toISOString()}, payload);
+    localDB.customers = localDB.customers || []; localDB.customers.push(nc); localDB.save();
+  }
+  document.getElementById("new-cust-name").value = "";
+  document.getElementById("new-cust-contact").value = "";
+  document.getElementById("new-cust-notes").value = "";
+  btnReset(submitBtn, "Cadastrar Cliente");
+  renderCustomers();
+  hideLoading();
+});
+
+var _editCustId = null;
+function openCustomerEdit(c) {
+  _editCustId = c.id || null;
+  document.getElementById("edit-cust-name").value = c.name || "";
+  document.getElementById("edit-cust-contact").value = c.contact || "";
+  document.getElementById("edit-cust-notes").value = c.notes || "";
+  document.getElementById("customer-edit-modal").classList.remove("hidden");
+  document.getElementById("edit-cust-name").focus();
+}
+document.getElementById("customer-edit-cancel").addEventListener("click", function() {
+  document.getElementById("customer-edit-modal").classList.add("hidden");
+});
+document.getElementById("customer-edit-modal").addEventListener("click", function(e) {
+  if (e.target === this) this.classList.add("hidden");
+});
+document.getElementById("customer-edit-form").addEventListener("submit", async function(e) {
+  e.preventDefault();
+  var submitBtn = document.getElementById("edit-cust-submit");
+  btnLoad(submitBtn); showLoading(); await yieldUI();
+  var updates = {
+    name:    document.getElementById("edit-cust-name").value.trim(),
+    contact: document.getElementById("edit-cust-contact").value.trim(),
+    notes:   document.getElementById("edit-cust-notes").value.trim()
+  };
+  if (sb && _editCustId) {
+    var { error } = await sb.from("customers").update(updates).eq("id", _editCustId);
+    if (error) { showError("Erro ao atualizar cliente.", error); hideLoading(); btnUnload(submitBtn); return; }
+  }
+  var local = localDB.customers.find(function(c){return c.id===_editCustId;});
+  if (local) { Object.assign(local, updates); localDB.save(); }
+  await fetchCustomers();
+  hideLoading(); btnUnload(submitBtn);
+  document.getElementById("customer-edit-modal").classList.add("hidden");
+  renderCustomers();
+});
+
 // -- Search wiring ---------------------------------------------------------
 (function() {
   [["filaments-search", function() { renderFilamentsList(); }],
    ["sales-search",     function() { renderSales(); }],
    ["products-search",  function() { renderProducts(); }],
-   ["orders-search",    function() { renderOrders(); }]]
+   ["orders-search",    function() { renderOrders(); }],
+   ["customers-search", function() { renderCustomers(); }]]
   .forEach(function(p) { var el = document.getElementById(p[0]); if (el) el.oninput = p[1]; });
 })();
 
