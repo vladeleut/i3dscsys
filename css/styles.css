@@ -80,6 +80,13 @@ body::after{
   border-radius:20px;
 }
 
+/* user menu dropdown */
+.user-menu-wrap{position:relative}
+#user-menu{position:absolute;right:0;top:40px;background:var(--card);border:1px solid var(--border);padding:8px;border-radius:8px;display:flex;flex-direction:column;gap:6px;min-width:180px}
+#user-menu.hidden{display:none}
+#user-menu button{background:transparent;border:none;text-align:left;padding:8px 10px;border-radius:6px;color:var(--text);cursor:pointer}
+#user-menu button:hover{background:rgba(255,255,255,.03)}
+
 /* === BOTTOM NAV (mobile-first) === */
 .app-nav{
   position:fixed;bottom:0;left:0;right:0;
@@ -109,9 +116,10 @@ body::after{
 .app-nav button:active:not(.btn-loading){transform:scale(.88)}
 /* 6 botões no mobile: scroll horizontal se necessario */
 @media(max-width:420px){
-  .app-nav{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  /* distribute icons evenly on small screens */
+  .app-nav{overflow-x:hidden;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .app-nav::-webkit-scrollbar{display:none}
-  .app-nav button{flex:none;min-width:58px}
+  .app-nav button{flex:1;min-width:0;padding:6px 4px}
 }
 
 /* === DESKTOP NAV === */
@@ -515,6 +523,11 @@ button[type="submit"].btn-loading::after{border-top-color:#04101e}
   transition:background .15s;
 }
 .btn-ghost:hover{background:rgba(255,255,255,.13)}
+/* form actions: align buttons horizontally and override global submit width */
+.form-actions{display:flex;gap:8px;margin-top:8px}
+.form-actions button{flex:1;min-width:0}
+.form-actions button[type="submit"]{width:auto;padding:12px 14px;margin:0}
+.form-actions .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,.08)}
 /* Dica visual: parte de texto do card clicável */
 .item-info.clickable{cursor:pointer;flex:1}
 .item-info.clickable:hover .item-info-inner{

@@ -1,0 +1,5 @@
+Patch: add pricing suggestion UI and computation using defaults
+- Added #product-price-suggestion and apply button
+- Added #edit-prod-price-suggestion and apply button
+- Added JS computeSuggestedPrice()/computeSuggestedPriceForEdit() and defaults
+- Hooked suggestion updates into updateProductTotalGrams and updateEditProductTotalGrams

@@ -11,6 +11,82 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY) {
   }
 }
 
+// Pricing defaults (used for suggestion when filaments lack cost info)
+let DEFAULT_MAT_COST_PER_KG = 50; // BRL per kg
+let DEFAULT_HOURLY_RATE = 10;     // BRL per hour of printing
+let DEFAULT_MARGIN = 0.30;        // 30% margin
+
+// persisted application settings (editable in Settings)
+var appSettings = {
+  matCostPerKg: DEFAULT_MAT_COST_PER_KG,
+  hourlyRate: DEFAULT_HOURLY_RATE,
+  margin: DEFAULT_MARGIN,
+  defaultMultiplier: 1.0
+};
+
+async function loadSettings() {
+  // Try to load user settings from Supabase; fall back to localStorage
+  if (sb) {
+    try {
+      const { data: userData } = await sb.auth.getUser();
+      const userId = userData && userData.user ? userData.user.id : null;
+      if (userId) {
+          const { data, error } = await sb.from('app_settings').select('*').eq('owner', userId).maybeSingle();
+          if (!error && data) {
+            if (data.mat_cost_per_kg != null) appSettings.matCostPerKg = parseFloat(data.mat_cost_per_kg) || appSettings.matCostPerKg;
+            if (data.hourly_rate != null) appSettings.hourlyRate = parseFloat(data.hourly_rate) || appSettings.hourlyRate;
+            if (data.margin != null) appSettings.margin = parseFloat(data.margin) || appSettings.margin;
+            if (data.default_multiplier != null) appSettings.defaultMultiplier = parseFloat(data.default_multiplier) || appSettings.defaultMultiplier;
+            return;
+          }
+        }
+    } catch (e) { console.warn('loadSettings (supabase) failed', e); }
+  }
+  // localStorage fallback
+  try {
+    var s = localStorage.getItem('app_settings');
+    if (s) {
+      var p = JSON.parse(s);
+      if (p.matCostPerKg != null) appSettings.matCostPerKg = parseFloat(p.matCostPerKg) || appSettings.matCostPerKg;
+      if (p.hourlyRate != null) appSettings.hourlyRate = parseFloat(p.hourlyRate) || appSettings.hourlyRate;
+      if (p.margin != null) appSettings.margin = parseFloat(p.margin) || appSettings.margin;
+      if (p.defaultMultiplier != null) appSettings.defaultMultiplier = parseFloat(p.defaultMultiplier) || appSettings.defaultMultiplier;
+    }
+  } catch (e) { console.warn('loadSettings (local) failed', e); }
+}
+
+async function saveSettings() {
+  // Persist to Supabase when available and user authenticated; otherwise to localStorage
+  var success = true;
+  if (sb) {
+    try {
+      const { data: userData } = await sb.auth.getUser();
+      const userId = userData && userData.user ? userData.user.id : null;
+      if (userId) {
+        const payload = {
+          owner: userId,
+          mat_cost_per_kg: appSettings.matCostPerKg,
+          hourly_rate: appSettings.hourlyRate,
+          margin: appSettings.margin,
+          default_multiplier: appSettings.defaultMultiplier,
+          updated_at: new Date().toISOString()
+        };
+        // upsert on owner (requires unique constraint on owner in DB)
+        const { error } = await sb.from('app_settings').upsert(payload, { onConflict: 'owner' });
+        if (error) {
+          console.warn('saveSettings supabase upsert error', error);
+          success = false;
+        } else {
+          return true; // persisted to supabase successfully
+        }
+      }
+    } catch (e) { console.warn('saveSettings (supabase) failed', e); success = false; }
+  }
+  try {
+    localStorage.setItem('app_settings', JSON.stringify(appSettings));
+  } catch(e) { console.warn('saveSettings (local) failed', e); success = false; }
+  return success;
+}
 // -- Local fallback ----------------------------------------------------------
 const localDB = {
   filaments:   JSON.parse(localStorage.getItem("filaments")   || "[]"),
@@ -56,6 +132,7 @@ function hideLoading() {
 // -- Sections ----------------------------------------------------------------
 const ALL_SECTIONS = [
   "sec-dashboard",
+  "sec-filaments-hub",
   "sec-filaments-register",
   "sec-filaments-list",
   "sec-sales-hub",
@@ -63,14 +140,27 @@ const ALL_SECTIONS = [
   "sec-sales-list",
   "sec-products",
   "sec-orders",
-  "sec-customers"
+  "sec-customers",
+  "sec-settings",
+  "sec-admin"
 ];
 
+var _previousSection = null;
 function showSection(id) {
+  // store previous visible section
+  try {
+    var current = ALL_SECTIONS.find(function(s) { var el = document.getElementById(s); return el && !el.classList.contains('hidden'); });
+    if (current && current !== id) _previousSection = current;
+  } catch (e) {}
   ALL_SECTIONS.forEach(s => {
     const el = document.getElementById(s);
     if (el) el.classList.toggle("hidden", s !== id);
   });
+}
+
+function goBack() {
+  if (_previousSection) { navTo(_previousSection); _previousSection = null; }
+  else { navTo('sec-dashboard'); }
 }
 
 // Navega para uma seção ativando seu botão de nav (reaproveita lógica de render do click handler)
@@ -84,19 +174,37 @@ function hubNavActive() {
   appNav.querySelectorAll("button[data-sec]").forEach(function(b) { b.classList.remove("active"); });
   var hb = appNav ? appNav.querySelector("[data-sec='sec-sales-hub']") : null; if (hb) hb.classList.add("active");
 }
-document.getElementById("hub-go-sell").addEventListener("click", async function() {
+var _hgSell = document.getElementById("hub-go-sell");
+if (_hgSell) _hgSell.addEventListener("click", async function() {
   showLoading(); await fetchFilaments(); hubNavActive(); prepSaleForm(); hideLoading(); showSection("sec-sales-register");
 });
-document.getElementById("hub-go-sales").addEventListener("click", async function() {
+var _hgSales = document.getElementById("hub-go-sales");
+if (_hgSales) _hgSales.addEventListener("click", async function() {
   showLoading(); await refreshAll(); renderSales(); hubNavActive(); hideLoading(); showSection("sec-sales-list");
 });
-document.getElementById("hub-go-orders").addEventListener("click", async function() {
+var _hgOrders = document.getElementById("hub-go-orders");
+if (_hgOrders) _hgOrders.addEventListener("click", async function() {
   showLoading(); await fetchFilaments(); await fetchOrders(); await fetchOrderItems();
   hubNavActive(); prepOrderForm(); renderOrders(); hideLoading(); showSection("sec-orders");
 });
-document.getElementById("hub-go-customers").addEventListener("click", async function() {
+var _hgCustomers = document.getElementById("hub-go-customers");
+if (_hgCustomers) _hgCustomers.addEventListener("click", async function() {
   showLoading(); await fetchCustomers(); await fetchOrders();
   hubNavActive(); renderCustomers(); hideLoading(); showSection("sec-customers");
+});
+
+// -- Filaments hub wiring --------------------------------------------------
+function filamentsHubActive() {
+  appNav.querySelectorAll("button[data-sec]").forEach(function(b) { b.classList.remove("active"); });
+  var hb = appNav ? appNav.querySelector("[data-sec='sec-filaments-hub']") : null; if (hb) hb.classList.add("active");
+}
+var _hfgReg = document.getElementById("hub-filament-go-register");
+if (_hfgReg) _hfgReg.addEventListener("click", async function() {
+  showLoading(); await fetchFilaments({ withPhoto: false }); filamentsHubActive(); hideLoading(); showSection("sec-filaments-register");
+});
+var _hfgList = document.getElementById("hub-filament-go-list");
+if (_hfgList) _hfgList.addEventListener("click", async function() {
+  showLoading(); await fetchFilaments({ withPhoto: true }); filamentsHubActive(); renderFilamentsList(); hideLoading(); showSection("sec-filaments-list");
 });
 
 // -- Auth --------------------------------------------------------------------
@@ -124,8 +232,11 @@ async function showApp(userEmail) {
       if (data && data.user) display = (data.user.user_metadata && data.user.user_metadata.display_name) || data.user.email || display;
     } catch (_) {}
   }
-  userArea.innerHTML = `<span>Olá, ${display}</span> <button id="signout">Sair</button>`;
-  document.getElementById("signout").onclick = signOut;
+  userArea.innerHTML = `<div class="user-menu-wrap"><button id="user-menu-btn">Olá, ${display} ▾</button><div id="user-menu" class="hidden"><button id="open-settings">⚙️ Configurações</button><button id="open-admin">🔒 Administração</button><button id="signout">Sair</button></div></div>`;
+  var umb = document.getElementById("user-menu-btn"); if (umb) umb.onclick = function(){ var m = document.getElementById('user-menu'); if (m) m.classList.toggle('hidden'); };
+  var msign = document.getElementById("signout"); if (msign) msign.onclick = signOut;
+  var openSettings = document.getElementById('open-settings'); if (openSettings) openSettings.onclick = function(){ var mm = document.getElementById('user-menu'); if (mm) mm.classList.add('hidden'); navTo('sec-settings'); };
+  var openAdmin = document.getElementById('open-admin'); if (openAdmin) openAdmin.onclick = function(){ var mm = document.getElementById('user-menu'); if (mm) mm.classList.add('hidden'); navTo('sec-admin'); };
 
   document.getElementById("sales-view-list").onclick = function() {
     salesViewMode = "list";
@@ -149,6 +260,12 @@ async function showApp(userEmail) {
 
   showLoading();
   await yieldUI();
+  await loadSettings();
+  // Refresh settings inputs after loading persisted values
+  var _iMat2 = document.getElementById('settings-mat-cost'); if (_iMat2) _iMat2.value = appSettings.matCostPerKg;
+  var _iHour2 = document.getElementById('settings-hourly-rate'); if (_iHour2) _iHour2.value = appSettings.hourlyRate;
+  var _iMargin2 = document.getElementById('settings-margin'); if (_iMargin2) _iMargin2.value = appSettings.margin;
+  var _iDMult2 = document.getElementById('settings-default-multiplier'); if (_iDMult2) _iDMult2.value = appSettings.defaultMultiplier;
   await refreshAll();
   hideLoading();
   renderDashboard();
@@ -203,7 +320,7 @@ if (appNav) {
       } else if (secId === "sec-sales-hub") {
         // hub only shows cards, no fetch needed
       } else if (secId === "sec-filaments-list") {
-        await fetchFilaments();
+        await fetchFilaments({ withPhoto: true });
         renderFilamentsList();
       } else if (secId === "sec-sales-register") {
         await fetchFilaments();
@@ -231,9 +348,12 @@ if (appNav) {
 }
 
 // -- Data fetching ------------------------------------------------------------
-async function fetchFilaments() {
+async function fetchFilaments(opts) {
+  // opts: { withPhoto: boolean } - by default fetch only lightweight columns to reduce payload
+  opts = opts || {};
   if (!sb) return;
-  const { data, error } = await sb.from("filaments").select("*");
+  var cols = opts.withPhoto ? "*" : "id,name,color,manufacturer,quantity,price_per_kg";
+  const { data, error } = await sb.from("filaments").select(cols);
   if (!error && data) { localDB.filaments = data; localDB.save(); }
 }
 
@@ -251,7 +371,7 @@ async function fetchProducts() {
 
 async function fetchSaleItems() {
   if (!sb) return;
-  const { data, error } = await sb.from("sale_items").select("qty_used");
+  const { data, error } = await sb.from("sale_items").select("*");
   if (!error && data) { localDB.sale_items = data; localDB.save(); }
 }
 
@@ -485,6 +605,7 @@ function openFilamentEdit(f) {
   document.getElementById("edit-fil-color").value = f.color || "";
   document.getElementById("edit-fil-manufacturer").value = f.manufacturer || "";
   document.getElementById("edit-fil-quantity").value = f.quantity != null ? f.quantity : "";
+  document.getElementById("edit-fil-price_per_kg").value = f.price_per_kg != null ? f.price_per_kg : "";
   document.getElementById("edit-fil-photo").value = "";
   document.getElementById("filament-edit-modal").classList.remove("hidden");
   document.getElementById("edit-fil-name").focus();
@@ -509,6 +630,8 @@ document.getElementById("filament-edit-form").addEventListener("submit", async f
     manufacturer: document.getElementById("edit-fil-manufacturer").value.trim(),
     quantity: parseFloat(document.getElementById("edit-fil-quantity").value) || 0
   };
+  var pp = document.getElementById("edit-fil-price_per_kg").value;
+  if (pp !== undefined && pp !== null && pp !== "") updates.price_per_kg = parseFloat(pp) || 0;
   var photoFiles = document.getElementById("edit-fil-photo").files;
   if (photoFiles && photoFiles.length) {
     var newPhoto = await uploadFiles(photoFiles, "filament-photos");
@@ -535,6 +658,7 @@ document.getElementById("filament-form").addEventListener("submit", async functi
   await yieldUI();
   var fd = new FormData(e.target);
   var obj = { name: fd.get("name"), color: fd.get("color"), manufacturer: fd.get("manufacturer"), quantity: parseFloat(fd.get("quantity")) || 0, photo: null };
+  var pp = fd.get("price_per_kg"); if (pp !== null && pp !== "") obj.price_per_kg = parseFloat(pp) || 0;
   var file = e.target.photo.files;
   if (file && file.length) {
     var photoVal = await uploadFiles(file, "filament-photos");
@@ -547,11 +671,17 @@ document.getElementById("filament-form").addEventListener("submit", async functi
     localDB.filaments.push(obj); localDB.save();
   }
   e.target.reset();
+  // clear previousSection when saved and go to list
+  _previousSection = null;
   await fetchFilaments();
   hideLoading();
   btnUnload(submitBtn);
   alert("Filamento salvo!");
 });
+
+// Cancel button on filament form: go back to previous section
+var _filCancelBtn = document.getElementById("filament-form-cancel");
+if (_filCancelBtn) _filCancelBtn.addEventListener("click", function() { goBack(); });
 
 async function addFilamentStock(id, name, grams) {
   var newQty;
@@ -981,6 +1111,51 @@ function addProductUsageRow() {
   updateProductDelVisibility();
 }
 
+function computeSuggestedPrice() {
+  var totalMat = 0;
+  document.querySelectorAll("#product-usage-items .usage-row").forEach(function(row) {
+    var s = row.querySelector("select"); var q = row.querySelector("input[type='number']");
+    if (!s || !s.value || !q || !q.value) return;
+    var fil = localDB.filaments.find(function(f){ return f.id===s.value || f.name===s.value; }) || {};
+    var pricePerKg = fil.price_per_kg || fil.cost_per_kg || fil.cost || DEFAULT_MAT_COST_PER_KG;
+    totalMat += (parseFloat(q.value)||0) / 1000 * (parseFloat(pricePerKg)||DEFAULT_MAT_COST_PER_KG);
+  });
+  var ptEl = document.querySelector("[name='prod_print_time']");
+  var pt = ptEl && ptEl.value ? parseFloat(ptEl.value)||0 : 0;
+  // apply product-level filament multiplier (defaults to 1)
+  var multEl = document.querySelector("[name='prod_multiplier']");
+  var mult = (multEl && multEl.value) ? (parseFloat(multEl.value) || appSettings.defaultMultiplier || 1) : (appSettings.defaultMultiplier || 1);
+  totalMat = totalMat * mult;
+  var timeCost = pt * (appSettings.hourlyRate || DEFAULT_HOURLY_RATE);
+  var base = totalMat + timeCost;
+  var suggested = base * (1 + (appSettings.margin != null ? appSettings.margin : DEFAULT_MARGIN));
+  var el = document.getElementById("product-price-suggestion");
+  if (el) el.textContent = "Sugestão: R$ " + suggested.toFixed(2).replace('.', ',');
+  return suggested;
+}
+
+function computeSuggestedPriceForEdit() {
+  var totalMat = 0;
+  document.querySelectorAll("#edit-prod-usage-items .usage-row").forEach(function(row) {
+    var s = row.querySelector("select"); var q = row.querySelector("input[type='number']");
+    if (!s || !s.value || !q || !q.value) return;
+    var fil = localDB.filaments.find(function(f){ return f.id===s.value || f.name===s.value; }) || {};
+    var pricePerKg = fil.price_per_kg || fil.cost_per_kg || fil.cost || DEFAULT_MAT_COST_PER_KG;
+    totalMat += (parseFloat(q.value)||0) / 1000 * (parseFloat(pricePerKg)||DEFAULT_MAT_COST_PER_KG);
+  });
+  var ptEl = document.getElementById("edit-prod-print-time");
+  var pt = ptEl && ptEl.value ? parseFloat(ptEl.value)||0 : 0;
+  var multEl = document.getElementById('edit-prod-multiplier');
+  var mult = (multEl && multEl.value) ? (parseFloat(multEl.value) || appSettings.defaultMultiplier || 1) : (appSettings.defaultMultiplier || 1);
+  totalMat = totalMat * mult;
+  var timeCost = pt * (appSettings.hourlyRate || DEFAULT_HOURLY_RATE);
+  var base = totalMat + timeCost;
+  var suggested = base * (1 + (appSettings.margin != null ? appSettings.margin : DEFAULT_MARGIN));
+  var el = document.getElementById("edit-prod-price-suggestion");
+  if (el) el.textContent = "Sugestão: R$ " + suggested.toFixed(2).replace('.', ',');
+  return suggested;
+}
+
 function updateProductDelVisibility() {
   var rows = document.querySelectorAll("#product-usage-items .usage-row");
   rows.forEach(function(r) { var b = r.querySelector("button"); if (b) b.style.display = rows.length > 1 ? "inline-block" : "none"; });
@@ -993,6 +1168,7 @@ function updateProductTotalGrams() {
   });
   var el = document.getElementById("product-total-grams");
   if (el) el.textContent = "Total utilizado: " + total.toFixed(1) + " g";
+  computeSuggestedPrice();
 }
 
 function addProductEditUsageRow(preFilId, preQty) {
@@ -1035,6 +1211,7 @@ function updateEditProductTotalGrams() {
   });
   var el = document.getElementById("edit-prod-total-grams");
   if (el) el.textContent = "Total: " + total.toFixed(1) + " g";
+  computeSuggestedPriceForEdit();
 }
 
 document.getElementById("product-form-toggle").addEventListener("click", function() {
@@ -1042,6 +1219,8 @@ document.getElementById("product-form-toggle").addEventListener("click", functio
   var nowHidden = wrap.classList.toggle("hidden");
   this.textContent = nowHidden ? "+ Cadastrar produto" : "\u2715 Cancelar cadastro";
   if (!nowHidden && !document.getElementById("product-usage-items").children.length) addProductUsageRow();
+  // update suggestion when opening
+  setTimeout(function(){ updateProductTotalGrams(); }, 20);
 });
 
 document.getElementById("product-form").addEventListener("submit", async function(e) {
@@ -1051,6 +1230,7 @@ document.getElementById("product-form").addEventListener("submit", async functio
   var name = e.target.prod_name.value.trim();
   var price = parseFloat(e.target.prod_price.value) || 0;
   var printTime = e.target.prod_print_time.value ? (parseFloat(e.target.prod_print_time.value) || null) : null;
+  var multiplier = e.target.prod_multiplier && e.target.prod_multiplier.value ? (parseFloat(e.target.prod_multiplier.value) || appSettings.defaultMultiplier || 1) : (appSettings.defaultMultiplier || 1);
   var filInfo = [];
   document.querySelectorAll("#product-usage-items .usage-row").forEach(function(row) {
     var sel = row.querySelector("select"); var qty = row.querySelector("input");
@@ -1061,7 +1241,7 @@ document.getElementById("product-form").addEventListener("submit", async functio
   var photoFiles = e.target.prod_photo.files;
   var photoVal = null;
   if (photoFiles && photoFiles.length) { photoVal = await uploadFiles(photoFiles, "product-photos"); }
-  var obj = { name: name, price: price, print_time: printTime, filaments_info: filInfo.length ? JSON.stringify(filInfo) : null };
+  var obj = { name: name, price: price, print_time: printTime, filaments_info: filInfo.length ? JSON.stringify(filInfo) : null, multiplier: multiplier };
   if (photoVal) obj.photo = photoVal;
   if (sb) {
     var { error } = await sb.from("products").insert(obj);
@@ -1074,6 +1254,9 @@ document.getElementById("product-form").addEventListener("submit", async functio
   e.target.reset();
   document.getElementById("product-usage-items").innerHTML = "";
   addProductUsageRow();
+  // reset suggestion
+  var ps = document.getElementById("product-price-suggestion"); if (ps) ps.textContent = "Sugestão: R$ 0,00";
+  var pgs = document.getElementById("product-total-grams"); if (pgs) pgs.textContent = "Total utilizado: 0 g";
   document.getElementById("product-form-wrap").classList.add("hidden");
   document.getElementById("product-form-toggle").textContent = "+ Cadastrar produto";
   hideLoading(); btnUnload(submitBtn);
@@ -1088,6 +1271,7 @@ function openProductEdit(p) {
   document.getElementById("edit-prod-name").value = p.name || "";
   document.getElementById("edit-prod-price").value = p.price || "";
   document.getElementById("edit-prod-print-time").value = p.print_time || "";
+  document.getElementById("edit-prod-multiplier").value = p.multiplier != null ? p.multiplier : 1;
   var container = document.getElementById("edit-prod-usage-items");
   container.innerHTML = "";
   var filArr = [];
@@ -1120,6 +1304,8 @@ document.getElementById("product-edit-form").addEventListener("submit", async fu
     filInfo.push({ filament_id: sel.value, name: fil ? fil.name : sel.value, color: fil ? (fil.color || "") : "", qty: parseFloat(qty.value) || 0 });
   });
   var updates = { name: name, price: price, print_time: pTime, filaments_info: filInfo.length ? JSON.stringify(filInfo) : null };
+  var pm = document.getElementById('edit-prod-multiplier');
+  updates.multiplier = pm && pm.value ? (parseFloat(pm.value) || 1) : 1;
   var photoFiles = document.getElementById("edit-prod-photo").files;
   if (photoFiles && photoFiles.length) { updates.photo = await uploadFiles(photoFiles, "product-photos"); }
   if (sb && _editProdId) {
@@ -1140,6 +1326,55 @@ document.getElementById("product-edit-form").addEventListener("submit", async fu
   document.getElementById("product-edit-modal").classList.add("hidden");
   renderProducts();
   btnUnload(submitBtn); hideLoading();
+});
+
+// Settings form handlers
+var settingsForm = document.getElementById('settings-form');
+if (settingsForm) {
+  // initialize inputs
+  var iMat = document.getElementById('settings-mat-cost');
+  var iHour = document.getElementById('settings-hourly-rate');
+  var iMargin = document.getElementById('settings-margin');
+    var iDefaultMult = document.getElementById('settings-default-multiplier');
+  if (iMat) iMat.value = appSettings.matCostPerKg;
+  if (iHour) iHour.value = appSettings.hourlyRate;
+  if (iMargin) iMargin.value = appSettings.margin;
+    if (iDefaultMult) iDefaultMult.value = appSettings.defaultMultiplier;
+  settingsForm.addEventListener('submit', async function(e){
+    e.preventDefault();
+    if (iMat) appSettings.matCostPerKg = parseFloat(iMat.value) || appSettings.matCostPerKg;
+    if (iHour) appSettings.hourlyRate = parseFloat(iHour.value) || appSettings.hourlyRate;
+    if (iMargin) appSettings.margin = parseFloat(iMargin.value) || appSettings.margin;
+    if (iDefaultMult) appSettings.defaultMultiplier = parseFloat(iDefaultMult.value) || appSettings.defaultMultiplier;
+    showLoading();
+    var ok = await saveSettings();
+    hideLoading();
+    if (ok) {
+      alert('Configurações salvas');
+      navTo('sec-dashboard');
+    } else {
+      alert('Falha ao salvar nas configurações remotas. Valores foram salvos localmente. Verifique a conexão ou as políticas do Supabase.');
+    }
+  });
+  var sCancel = document.getElementById('settings-cancel'); if (sCancel) sCancel.addEventListener('click', function(){ goBack(); });
+}
+
+// Admin actions
+var adminRefresh = document.getElementById('admin-refresh'); if (adminRefresh) adminRefresh.addEventListener('click', async function(){ showLoading(); await refreshAll(); hideLoading(); alert('Refresh concluído'); });
+var adminClear = document.getElementById('admin-clear-local'); if (adminClear) adminClear.addEventListener('click', function(){ if(confirm('Limpar cache local (localStorage)?')){ localStorage.clear(); alert('localStorage limpo — recarregue a página.'); } });
+
+// Wire multiplier inputs to recalculate dynamically
+var prodMultEl = document.querySelector("[name='prod_multiplier']");
+if (prodMultEl) prodMultEl.addEventListener('input', function(){ updateProductTotalGrams(); });
+var editProdMultEl = document.getElementById('edit-prod-multiplier');
+if (editProdMultEl) editProdMultEl.addEventListener('input', function(){ updateEditProductTotalGrams(); });
+
+// Apply suggestion buttons
+var applyBtn = document.getElementById("apply-price-suggestion"); if (applyBtn) applyBtn.addEventListener("click", function(){
+  var s = computeSuggestedPrice(); if (!isNaN(s)) document.querySelector("input[name='prod_price']").value = s.toFixed(2);
+});
+var applyEditBtn = document.getElementById("apply-edit-price-suggestion"); if (applyEditBtn) applyEditBtn.addEventListener("click", function(){
+  var s = computeSuggestedPriceForEdit(); if (!isNaN(s)) document.getElementById("edit-prod-price").value = s.toFixed(2);
 });
 
 // -- Dashboard render -------------------------------------------------------
@@ -1637,6 +1872,7 @@ document.getElementById("sign-up").onclick = async function() {
 
 async function boot() {
   showAuth();
+  loadSettings();
   if (sb) {
     try {
       var { data } = await sb.auth.getUser();
