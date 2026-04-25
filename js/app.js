@@ -402,27 +402,67 @@ function toBase64(file) {
   return new Promise(function(res, rej) { var r = new FileReader(); r.onload = function() { res(r.result); }; r.onerror = rej; r.readAsDataURL(file); });
 }
 
-async function compressImage(file, maxPx, quality) {
-  maxPx = maxPx || 1200; quality = quality || 0.82;
+// Compress an image to a target max dimension and size budget.
+// Strategy: try progressively smaller quality until under MAX_UPLOAD_BYTES,
+// with a hard canvas timeout to avoid hanging forever on mobile.
+var MAX_UPLOAD_BYTES = 300 * 1024; // 300 KB target per photo
+
+function _canvasToBlob(canvas, quality) {
   return new Promise(function(resolve) {
-    if (!file.type.startsWith("image/")) { resolve(file); return; }
-    var img = new Image();
-    var url = URL.createObjectURL(file);
-    img.onload = function() {
-      URL.revokeObjectURL(url);
-      var w = img.width, h = img.height;
-      if (w <= maxPx && h <= maxPx) { resolve(file); return; }
-      var scale = Math.min(maxPx / w, maxPx / h);
-      var canvas = document.createElement("canvas");
-      canvas.width = Math.round(w * scale); canvas.height = Math.round(h * scale);
-      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(function(blob) {
-        resolve(blob ? new File([blob], file.name, { type: "image/jpeg" }) : file);
-      }, "image/jpeg", quality);
-    };
-    img.onerror = function() { URL.revokeObjectURL(url); resolve(file); };
-    img.src = url;
+    // Timeout per attempt: 10s
+    var done = false;
+    var t = setTimeout(function() { if (!done) { done = true; resolve(null); } }, 10000);
+    canvas.toBlob(function(blob) {
+      if (done) return;
+      done = true; clearTimeout(t);
+      resolve(blob || null);
+    }, "image/jpeg", quality);
   });
+}
+
+async function compressImage(file, maxPx, quality) {
+  if (!file.type.startsWith("image/")) return file;
+  maxPx = maxPx || 700;  // 700px is plenty for catalog/filament thumbnails
+  quality = quality || 0.82;
+
+  var img = await new Promise(function(resolve, reject) {
+    var i = new Image();
+    var url = URL.createObjectURL(file);
+    i.onload = function() { URL.revokeObjectURL(url); resolve(i); };
+    i.onerror = function() { URL.revokeObjectURL(url); reject(); };
+    i.src = url;
+  }).catch(function() { return null; });
+
+  if (!img) return file; // can't decode — upload as-is
+
+  var w = img.width, h = img.height;
+  var scale = Math.min(maxPx / w, maxPx / h, 1); // never upscale
+  var cw = Math.round(w * scale), ch = Math.round(h * scale);
+
+  var canvas = document.createElement("canvas");
+  canvas.width = cw; canvas.height = ch;
+  try {
+    canvas.getContext("2d").drawImage(img, 0, 0, cw, ch);
+  } catch (e) {
+    console.warn("compressImage: canvas draw failed, uploading original", e);
+    return file;
+  }
+
+  // Try progressively lower quality until we're under MAX_UPLOAD_BYTES
+  var qualities = [quality, 0.70, 0.55, 0.40];
+  for (var qi = 0; qi < qualities.length; qi++) {
+    var blob = await _canvasToBlob(canvas, qualities[qi]);
+    if (!blob) break; // timeout — fall back to original
+    if (blob.size <= MAX_UPLOAD_BYTES || qi === qualities.length - 1) {
+      console.log("compressImage: " + Math.round(file.size/1024) + "KB → " + Math.round(blob.size/1024) + "KB (q=" + qualities[qi] + ", " + cw + "x" + ch + ")");
+      return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+    }
+    // still too large — try again with lower quality
+  }
+
+  // All attempts failed or timed out — upload original and warn
+  console.warn("compressImage: could not compress under " + MAX_UPLOAD_BYTES/1024 + "KB, uploading original (" + Math.round(file.size/1024) + "KB)");
+  return file;
 }
 
 async function uploadFiles(files, bucket) {
@@ -550,6 +590,20 @@ function closeLightbox() { var lb = document.getElementById("lightbox"); if (lb)
     if (e.key === "ArrowLeft") { _lbIdx = (_lbIdx - 1 + _lbUrls.length) % _lbUrls.length; _lbShow(); }
     if (e.key === "ArrowRight") { _lbIdx = (_lbIdx + 1) % _lbUrls.length; _lbShow(); }
   });
+  // Touch swipe support for mobile
+  var _lbTouchX = null;
+  var lbContent = document.getElementById("lightbox-content");
+  lbContent.addEventListener("touchstart", function(e) {
+    _lbTouchX = e.touches[0].clientX;
+  }, { passive: true });
+  lbContent.addEventListener("touchend", function(e) {
+    if (_lbTouchX === null || _lbUrls.length < 2) return;
+    var dx = e.changedTouches[0].clientX - _lbTouchX;
+    _lbTouchX = null;
+    if (Math.abs(dx) < 50) return; // too short — ignore
+    if (dx < 0) { _lbIdx = (_lbIdx + 1) % _lbUrls.length; _lbShow(); }
+    else        { _lbIdx = (_lbIdx - 1 + _lbUrls.length) % _lbUrls.length; _lbShow(); }
+  }, { passive: true });
 })();
 
 // -- Filaments list render -------------------------------------------------
@@ -992,7 +1046,23 @@ function renderProducts() {
     var acts = document.createElement("div"); acts.className = "item-actions";
     var pCopy = p;
 
-    var prontaBtn = document.createElement("button"); prontaBtn.textContent = "Peça pronta";
+    // "Ver fotos" button — large tap target, useful on mobile
+    if (pCopy.photo) {
+      var verFotosBtn = document.createElement("button");
+      verFotosBtn.textContent = "📷 Ver fotos";
+      verFotosBtn.title = "Ver fotos do produto";
+      verFotosBtn.onclick = function(e) {
+        e.stopPropagation();
+        resolveAllPhotoUrls(pCopy.photo, "product-photos").then(function(urls) {
+          if (urls.length) openLightbox(urls, 0);
+          else alert("Sem fotos disponíveis.");
+        });
+      };
+      acts.appendChild(verFotosBtn);
+    }
+
+    var prontaBtn = document.createElement("button");
+    prontaBtn.textContent = "Peça pronta";
     prontaBtn.title = "Registrar venda de peça já impressa \u2014 estoque não é alterado";
     prontaBtn.onclick = async function() {
       if (!confirm("Registrar venda de \"" + pCopy.name + "\" (R$ " + parseFloat(pCopy.price || 0).toFixed(2) + ")? O estoque NÃO será alterado.")) return;
