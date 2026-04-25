@@ -737,6 +737,13 @@ document.getElementById("filament-form").addEventListener("submit", async functi
 var _filCancelBtn = document.getElementById("filament-form-cancel");
 if (_filCancelBtn) _filCancelBtn.addEventListener("click", function() { goBack(); });
 
+var _orderCancelBtn = document.getElementById("order-form-cancel");
+if (_orderCancelBtn) _orderCancelBtn.addEventListener("click", function() {
+  document.getElementById("order-form").reset();
+  var oc = document.getElementById("order-usage-items"); if (oc) { oc.innerHTML = ""; addOrderUsageRow(); }
+  goBack();
+});
+
 async function addFilamentStock(id, name, grams) {
   var newQty;
   if (sb && id) {
@@ -782,6 +789,23 @@ var salesViewMode = "list";
 function prepSaleForm() {
   usageItems.innerHTML = "";
   addUsageRow();
+  // Populate customer selector
+  var saleCustSel = document.getElementById("sale-customer-sel");
+  if (saleCustSel) {
+    saleCustSel.innerHTML = "<option value=''>Sem cliente vinculado</option>";
+    var sorted = (localDB.customers || []).slice().sort(function(a,b){return (a.name||"" ).localeCompare(b.name||"","pt-BR",{sensitivity:"base"});});
+    sorted.forEach(function(c) {
+      var o = document.createElement("option"); o.value = c.id;
+      o.textContent = c.name + (c.contact ? " ("+c.contact+")" : "");
+      saleCustSel.appendChild(o);
+    });
+    var newOpt = document.createElement("option"); newOpt.value = "__new__"; newOpt.textContent = "+ Novo cliente…";
+    saleCustSel.appendChild(newOpt);
+    saleCustSel.onchange = function() {
+      var wrap = document.getElementById("sale-new-customer-fields");
+      if (wrap) wrap.classList.toggle("hidden", saleCustSel.value !== "__new__");
+    };
+  }
 }
 
 function addUsageRow() {
@@ -827,6 +851,22 @@ document.getElementById("sale-form").addEventListener("submit", async function(e
   var product_name = fd.get("product_name");
   var price = parseFloat(fd.get("price")) || 0;
   var notes = fd.get("notes") || "";
+
+  // Resolve customer_id (optional)
+  var saleCustSel = document.getElementById("sale-customer-sel");
+  var _saleCustId = saleCustSel ? saleCustSel.value : "";
+  var saleCustomerId = null;
+  if (_saleCustId === "__new__") {
+    var _scName = (document.getElementById("sale-new-cust-name") || {}).value || "";
+    var _scContact = (document.getElementById("sale-new-cust-contact") || {}).value || "";
+    if (_scName.trim() && sb) {
+      var _scIns = await sb.from("customers").insert({ name: _scName.trim(), contact: _scContact.trim() }).select().single();
+      if (!_scIns.error) { saleCustomerId = _scIns.data.id; await fetchCustomers(); }
+    }
+  } else if (_saleCustId) {
+    saleCustomerId = _saleCustId;
+  }
+
   var usages = [];
   usageItems.querySelectorAll("div").forEach(function(r) {
     var s = r.querySelector("select"); var q = r.querySelector("input");
@@ -835,10 +875,10 @@ document.getElementById("sale-form").addEventListener("submit", async function(e
   if (!usages.length) { hideLoading(); btnUnload(submitBtn); alert("Selecione pelo menos um filamento."); return; }
 
   if (sb) {
-    var ins = await sb.from("sales").insert({ product_name: product_name, price: price, notes: notes, created_at: new Date().toISOString() }).select().single();
+    var ins = await sb.from("sales").insert({ product_name: product_name, price: price, notes: notes, customer_id: saleCustomerId, created_at: new Date().toISOString() }).select().single();
     var saleData;
     if (ins.error) {
-      if (String(ins.error.message).indexOf("notes") >= 0) {
+      if (String(ins.error.message).indexOf("notes") >= 0 || String(ins.error.message).indexOf("customer_id") >= 0) {
         var ins2 = await sb.from("sales").insert({ product_name: product_name, price: price, created_at: new Date().toISOString() }).select().single();
         if (ins2.error) { showError("Erro ao inserir venda.", ins2.error); hideLoading(); btnUnload(submitBtn); return; }
         saleData = ins2.data;
@@ -1121,6 +1161,22 @@ function renderProducts() {
       var prEl = document.querySelector("#order-form [name='price']");
       if (pnEl) pnEl.value = pCopy.name;
       if (prEl) prEl.value = pCopy.price || "";
+      // Pre-fill filaments from product catalog
+      var prodFil2 = []; try { prodFil2 = pCopy.filaments_info ? JSON.parse(pCopy.filaments_info) : []; } catch(e) {}
+      if (prodFil2.length) {
+        var orderContainer = document.getElementById("order-usage-items");
+        if (orderContainer) {
+          orderContainer.innerHTML = "";
+          prodFil2.forEach(function(f) {
+            addOrderUsageRow();
+            var lastRow = orderContainer.lastElementChild;
+            var s = lastRow.querySelector("select"); var q = lastRow.querySelector("input[type='number']");
+            if (s) s.value = f.filament_id || f.name || "";
+            if (q) q.value = f.qty || "";
+          });
+          addOrderUsageRow(); updateOrderDelVisibility();
+        }
+      }
       hideLoading();
     };
 

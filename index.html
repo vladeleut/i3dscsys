@@ -170,6 +170,12 @@
         <label style="color:var(--muted);font-size:14px">Foto do produto (opcional)</label>
         <input name="product_photo" type="file" accept="image/*" multiple>
         <textarea name="notes" placeholder="Observações (opcional)" rows="2"></textarea>
+        <label style="color:var(--muted);font-size:14px;margin-top:8px">Cliente (opcional)</label>
+        <select id="sale-customer-sel"><option value="">Sem cliente vinculado</option></select>
+        <div id="sale-new-customer-fields" class="hidden" style="margin-top:6px">
+          <input id="sale-new-cust-name" placeholder="Nome do novo cliente">
+          <input id="sale-new-cust-contact" placeholder="Contato (WhatsApp, email…)">
+        </div>
         <label style="color:var(--muted);font-size:14px;margin-top:8px">Filamentos usados</label>
         <div id="usage-items"></div>
         <button type="submit">Registrar Venda</button>
@@ -233,7 +239,10 @@
           <textarea name="notes" rows="2" placeholder="Observações (opcional)"></textarea>
           <label style="color:var(--muted);font-size:14px;margin-top:8px">Filamentos necessários</label>
           <div id="order-usage-items"></div>
-          <button type="submit">Criar Encomenda</button>
+          <div class="form-actions">
+            <button type="submit">Criar Encomenda</button>
+            <button type="button" id="order-form-cancel">Cancelar</button>
+          </div>
         </form>
       </div>
       <div class="card" style="margin-top:14px">

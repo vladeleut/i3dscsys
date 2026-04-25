@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS public.app_settings (
 );
 -- Add default_multiplier if table already existed without it
 ALTER TABLE IF EXISTS public.app_settings ADD COLUMN IF NOT EXISTS default_multiplier numeric DEFAULT 1.0;
+
+-- Add customer_id to sales (optional link to a customer)
+ALTER TABLE IF EXISTS public.sales ADD COLUMN IF NOT EXISTS customer_id uuid REFERENCES customers(id) ON DELETE SET NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS app_settings_owner_idx ON public.app_settings(owner);
 
 -- Enable RLS and policies (safe minimal setup)
