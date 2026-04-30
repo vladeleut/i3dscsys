@@ -131,8 +131,11 @@
       <h2>Registrar Uso de Filamento</h2>
       <form id="filament-usage-form">
         <label style="color:var(--muted);font-size:13px">Produto</label>
-        <input id="fu-product-name" list="fu-product-list" placeholder="Nome do produto (existente ou novo)" required autocomplete="off">
-        <datalist id="fu-product-list"></datalist>
+        <select id="fu-product-sel">
+          <option value="">Selecione um produto existente…</option>
+          <option value="__new__">+ Novo produto…</option>
+        </select>
+        <input id="fu-product-name" placeholder="Nome do novo produto" required autocomplete="off" class="hidden" style="margin-top:6px">
         <label style="color:var(--muted);font-size:13px;margin-top:8px">Filamento</label>
         <select id="fu-filament-sel" required>
           <option value="">Escolha o filamento…</option>

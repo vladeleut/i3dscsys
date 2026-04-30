@@ -681,14 +681,24 @@ function renderFilamentsList() {
 
 // -- Filament Usage (build tracking) -------------------------------------
 function prepFilamentUsageForm() {
-  // Populate product datalist (only products without any sales)
-  var dl = document.getElementById("fu-product-list"); if (!dl) return;
-  dl.innerHTML = "";
+  // Populate product select (only products without any sales)
+  var prodSel = document.getElementById("fu-product-sel"); if (!prodSel) return;
   var soldNames = new Set((localDB.sales || []).map(function(s) { return s.product_name; }));
-  (localDB.products || []).forEach(function(p) {
-    if (soldNames.has(p.name)) return; // locked — has sales
-    var opt = document.createElement("option"); opt.value = p.name; dl.appendChild(opt);
+  prodSel.innerHTML = "<option value=''>Selecione um produto existente…</option>";
+  (localDB.products || []).slice().sort(function(a,b){ return (a.name||"").localeCompare(b.name||"","pt-BR",{sensitivity:"base"}); }).forEach(function(p) {
+    if (soldNames.has(p.name)) return;
+    var o = document.createElement("option"); o.value = p.name; o.textContent = p.name; prodSel.appendChild(o);
   });
+  var newOpt = document.createElement("option"); newOpt.value = "__new__"; newOpt.textContent = "+ Novo produto…";
+  prodSel.appendChild(newOpt);
+  var nameInput = document.getElementById("fu-product-name");
+  prodSel.onchange = function() {
+    if (nameInput) {
+      if (prodSel.value === "__new__") { nameInput.classList.remove("hidden"); nameInput.required = true; nameInput.value = ""; nameInput.focus(); }
+      else { nameInput.classList.add("hidden"); nameInput.required = false; nameInput.value = ""; }
+    }
+  };
+  if (nameInput) { nameInput.classList.add("hidden"); nameInput.required = false; nameInput.value = ""; }
   // Populate filament select
   var sel = document.getElementById("fu-filament-sel"); if (!sel) return;
   sel.innerHTML = "<option value=''>Escolha o filamento\u2026</option>";
@@ -700,8 +710,8 @@ function prepFilamentUsageForm() {
     o.textContent = f.name + " \u2014 " + (f.color || "?") + " (" + (parseFloat(f.quantity)||0).toFixed(0) + "g disp.)";
     sel.appendChild(o);
   });
-  // Clear fields
-  var pn = document.getElementById("fu-product-name"); if (pn) pn.value = "";
+  var pn = document.getElementById("fu-product-name"); if (pn) { pn.value = ""; pn.classList.add("hidden"); pn.required = false; }
+  var ps = document.getElementById("fu-product-sel"); if (ps) ps.value = "";
   var fq = document.getElementById("fu-qty"); if (fq) fq.value = "";
   var ft = document.getElementById("fu-print-time"); if (ft) ft.value = "";
 }
@@ -711,7 +721,11 @@ document.getElementById("filament-usage-form").addEventListener("submit", async 
   var submitBtn = document.getElementById("fu-submit");
   btnLoad(submitBtn); showLoading(); await yieldUI();
 
-  var productName = (document.getElementById("fu-product-name").value || "").trim();
+  var _fuProdSel = document.getElementById("fu-product-sel");
+  var _fuProdSelVal = _fuProdSel ? _fuProdSel.value : "";
+  var productName = (_fuProdSelVal && _fuProdSelVal !== "__new__")
+    ? _fuProdSelVal
+    : (document.getElementById("fu-product-name").value || "").trim();
   var filamentId  = document.getElementById("fu-filament-sel").value;
   var qty         = parseFloat(document.getElementById("fu-qty").value) || 0;
   var printTime   = parseFloat(document.getElementById("fu-print-time").value) || 0;
