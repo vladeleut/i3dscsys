@@ -1065,20 +1065,34 @@ document.getElementById("sale-form").addEventListener("submit", async function(e
       }
     }
 
-    var existRes = await sb.from("products").select("id").eq("name", product_name).limit(1);
+    var existRes = await sb.from("products").select("id,filaments_info").eq("name", product_name).limit(1);
     var existProd = existRes.data;
+    var _saleFilJson = usages.length ? JSON.stringify(usages.map(function(u) {
+      var _ff = localDB.filaments.find(function(f) { return f.id === u.filament_id; });
+      return { filament_id: u.filament_id, name: _ff ? _ff.name : "", color: _ff ? (_ff.color||"") : "", qty: u.qty };
+    })) : null;
     if (!existProd || !existProd.length) {
       var prodObj = { name: product_name, price: price };
       if (productPhoto) prodObj.photo = productPhoto;
+      if (_saleFilJson) prodObj.filaments_info = _saleFilJson;
       await sb.from("products").insert(prodObj);
-    } else if (productPhoto) {
-      await sb.from("products").update({ photo: productPhoto }).eq("id", existProd[0].id);
+    } else {
+      var _prodUpd = {};
+      if (productPhoto) _prodUpd.photo = productPhoto;
+      if (_saleFilJson && !existProd[0].filaments_info) _prodUpd.filaments_info = _saleFilJson;
+      if (Object.keys(_prodUpd).length) await sb.from("products").update(_prodUpd).eq("id", existProd[0].id);
     }
 
     await refreshAll();
   } else {
     localDB.sales.push({ product_name: product_name, price: price, notes: notes, created_at: new Date().toISOString(), usages: usages });
-    if (!localDB.products.find(function(p) { return p.name === product_name; })) localDB.products.push({ name: product_name, price: price });
+    var _lsProd = localDB.products.find(function(p) { return p.name === product_name; });
+    var _lsFilJson = usages.length ? JSON.stringify(usages.map(function(u) {
+      var _ff = localDB.filaments.find(function(f) { return f.id === u.filament_id || f.name === u.filament_id; });
+      return { filament_id: u.filament_id, name: _ff ? _ff.name : "", color: _ff ? (_ff.color||"") : "", qty: u.qty };
+    })) : null;
+    if (!_lsProd) { var _newP = { name: product_name, price: price }; if (_lsFilJson) _newP.filaments_info = _lsFilJson; localDB.products.push(_newP); }
+    else if (_lsFilJson && !_lsProd.filaments_info) { _lsProd.filaments_info = _lsFilJson; }
     if (!noDeduct) {
       usages.forEach(function(u) { var f = localDB.filaments.find(function(x) { return x.id === u.filament_id || x.name === u.filament_id; }); if (f) f.quantity = Math.max(0, (f.quantity || 0) - u.qty); });
     }
@@ -1271,7 +1285,8 @@ function renderProducts() {
       var filArr = []; try { filArr = JSON.parse(p.filaments_info); } catch(e) {}
       if (filArr.length) filChipsHtml = "<div class='fil-chips'>" + filArr.map(function(f) { return "<span class='fil-chip'>" + (f.color || f.name || "") + ": " + (f.qty || 0) + "g</span>"; }).join("") + "</div>";
     }
-    var hasSale = (localDB.sales || []).some(function(s) { return s.product_name === p.name; });
+    var _pNameNorm = (p.name || "").trim().toLowerCase();
+    var hasSale = (localDB.sales || []).some(function(s) { return (s.product_name || "").trim().toLowerCase() === _pNameNorm; });
     var underConstructionBadge = (!hasSale && p.filaments_info) ? "<span class='badge-construction'>\uD83D\uDD27 Em constru\u00e7\u00e3o</span>" : "";
     info.innerHTML = "<strong>" + p.name + "</strong>" + underConstructionBadge + "<div class='muted'>R$ " + parseFloat(p.price || 0).toFixed(2) + "</div>" + filChipsHtml;
     var acts = document.createElement("div"); acts.className = "item-actions";
