@@ -1033,7 +1033,6 @@ document.getElementById("sale-form").addEventListener("submit", async function(e
     var s = r.querySelector("select"); var q = r.querySelector("input");
     if (s && s.value && q && q.value) usages.push({ filament_id: s.value, qty: parseFloat(q.value) || 0 });
   });
-  if (!usages.length) { hideLoading(); btnUnload(submitBtn); alert("Selecione pelo menos um filamento."); return; }
   var noDeduct = document.getElementById("sale-no-deduct") && document.getElementById("sale-no-deduct").checked;
 
   if (sb) {

@@ -183,6 +183,13 @@ form input,form select,form textarea{
   -webkit-appearance:none;
   transition:border-color .2s,box-shadow .2s;
 }
+form input[type="checkbox"]{
+  -webkit-appearance:checkbox;appearance:checkbox;
+  width:22px;height:22px;min-width:22px;
+  padding:0;margin:0;flex-shrink:0;
+  background:none;border:none;cursor:pointer;
+  accent-color:var(--a1);
+}
 form input:focus,form select:focus,form textarea:focus{
   border-color:var(--a1);
   box-shadow:0 0 0 3px rgba(0,210,255,.13);
