@@ -60,6 +60,20 @@
       <div class="stats-grid" id="stats-grid"></div>
       <div id="low-stock-alert"></div>
       <div class="card" style="margin-top:14px">
+        <div class="hub-grid" style="margin-bottom:0">
+          <div class="hub-card" id="dash-shortcut-usage">
+            <div class="hub-icon">🧵</div>
+            <div class="hub-label">Registrar Uso</div>
+            <div class="hub-sub">Lançar consumo durante construção</div>
+          </div>
+          <div class="hub-card" id="dash-shortcut-orders">
+            <div class="hub-icon">📋</div>
+            <div class="hub-label">Encomendas</div>
+            <div class="hub-sub">Ver pendentes e criar nova</div>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:14px">
         <p class="dash-subtitle">Últimas vendas</p>
         <div id="recent-sales-list"></div>
       </div>
@@ -94,6 +108,11 @@
     <!-- FILAMENT HUB -->
     <section id="sec-filaments-hub" class="section hidden">
       <div class="hub-grid">
+        <div class="hub-card" id="hub-filament-go-usage">
+          <div class="hub-icon">🧵</div>
+          <div class="hub-label">Registrar Uso</div>
+          <div class="hub-sub">Lançar consumo durante construção</div>
+        </div>
         <div class="hub-card" id="hub-filament-go-register">
           <div class="hub-icon">➕</div>
           <div class="hub-label">Cadastrar Filamento</div>
@@ -105,6 +124,28 @@
           <div class="hub-sub">Ver e gerenciar estoque</div>
         </div>
       </div>
+    </section>
+
+    <!-- Registrar Uso de Filamento -->
+    <section id="sec-filament-usage" class="card section hidden">
+      <h2>Registrar Uso de Filamento</h2>
+      <form id="filament-usage-form">
+        <label style="color:var(--muted);font-size:13px">Produto</label>
+        <input id="fu-product-name" list="fu-product-list" placeholder="Nome do produto (existente ou novo)" required autocomplete="off">
+        <datalist id="fu-product-list"></datalist>
+        <label style="color:var(--muted);font-size:13px;margin-top:8px">Filamento</label>
+        <select id="fu-filament-sel" required>
+          <option value="">Escolha o filamento…</option>
+        </select>
+        <label style="color:var(--muted);font-size:13px;margin-top:8px">Quantidade usada (g)</label>
+        <input id="fu-qty" type="number" step="0.1" min="0.1" placeholder="Ex: 12.5" required>
+        <label style="color:var(--muted);font-size:13px;margin-top:8px">Tempo de impressão desta parte (horas)</label>
+        <input id="fu-print-time" type="number" step="0.1" min="0" placeholder="Ex: 1.5 (opcional)">
+        <div class="form-actions" style="margin-top:12px">
+          <button type="submit" id="fu-submit">Registrar Uso</button>
+          <button type="button" id="fu-cancel" class="btn-ghost">Cancelar</button>
+        </div>
+      </form>
     </section>
 
     <!-- 1. Cadastrar Filamento: apenas o formulário -->
@@ -178,8 +219,15 @@
         </div>
         <label style="color:var(--muted);font-size:14px;margin-top:8px">Filamentos usados</label>
         <div id="usage-items"></div>
-        <button type="submit">Registrar Venda</button>
-        <button type="button" id="save-as-order">Salvar como Encomenda</button>
+        <div id="sale-no-deduct-wrap" style="display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:10px 12px;background:rgba(0,210,255,.06);border-radius:10px;border:1px solid rgba(0,210,255,.15)">
+          <input type="checkbox" id="sale-no-deduct" style="width:18px;height:18px;cursor:pointer;accent-color:var(--a1);flex-shrink:0">
+          <label for="sale-no-deduct" style="cursor:pointer;font-size:13px;color:var(--fg);line-height:1.4"><strong>Não deduzir estoque</strong><br><span style="color:var(--muted);font-size:12px">Use quando o filamento já foi consumido durante a construção</span></label>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Registrar Venda</button>
+          <button type="button" id="save-as-order">Salvar como Encomenda</button>
+          <button type="button" id="sale-form-cancel" class="btn-ghost">Cancelar</button>
+        </div>
       </form>
     </section>
 
@@ -211,9 +259,10 @@
           <div id="product-usage-items"></div>
           <div id="product-total-grams" style="font-size:13px;color:var(--muted);margin:4px 0 8px">Total utilizado: 0 g</div>
           <div id="product-price-suggestion" style="font-size:13px;color:var(--muted);margin:4px 0 8px">Sugestão: R$ 0,00</div>
-          <div style="display:flex;gap:8px;align-items:center">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button type="button" id="apply-price-suggestion" class="btn-ghost">Aplicar sugestão</button>
             <button type="submit" id="product-form-submit" style="margin-top:8px">Salvar produto</button>
+            <button type="button" id="product-form-cancel" class="btn-ghost" style="margin-top:8px">Cancelar</button>
           </div>
         </form>
       </div>
@@ -236,6 +285,15 @@
           </div>
           <input name="product_name" placeholder="Nome do produto" required style="margin-top:8px">
           <input name="price" type="number" step="0.01" placeholder="Preço estimado (BRL)" required>
+          <div id="order-pricing-calc" style="margin:8px 0;padding:10px 12px;background:rgba(0,210,255,.05);border-radius:10px;border:1px solid rgba(0,210,255,.12)">
+            <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Calculadora de preço (opcional)</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <input id="order-print-time" type="number" step="0.1" min="0" placeholder="Tempo impressão (h)" style="flex:1;min-width:120px">
+              <input id="order-multiplier" type="number" step="0.01" min="0.01" placeholder="Multiplicador filamento" style="flex:1;min-width:130px">
+              <input id="order-markup" type="number" step="1" min="0" placeholder="Markup %" style="flex:1;min-width:90px">
+            </div>
+            <div id="order-price-suggestion" style="font-size:13px;color:var(--a1);margin-top:8px;min-height:18px"></div>
+          </div>
           <textarea name="notes" rows="2" placeholder="Observações (opcional)"></textarea>
           <label style="color:var(--muted);font-size:14px;margin-top:8px">Filamentos necessários</label>
           <div id="order-usage-items"></div>
@@ -259,7 +317,10 @@
           <input id="new-cust-name" placeholder="Nome do cliente" required>
           <input id="new-cust-contact" placeholder="Contato (WhatsApp, email…)">
           <textarea id="new-cust-notes" placeholder="Observações (opcional)" rows="2" style="resize:vertical"></textarea>
-          <button type="submit" id="new-cust-submit">Cadastrar Cliente</button>
+          <div class="form-actions">
+            <button type="submit" id="new-cust-submit">Cadastrar Cliente</button>
+            <button type="button" id="new-cust-cancel" class="btn-ghost">Cancelar</button>
+          </div>
         </form>
       </div>
       <div class="card" style="margin-top:14px">

@@ -135,6 +135,7 @@ const ALL_SECTIONS = [
   "sec-filaments-hub",
   "sec-filaments-register",
   "sec-filaments-list",
+  "sec-filament-usage",
   "sec-sales-hub",
   "sec-sales-register",
   "sec-sales-list",
@@ -205,6 +206,19 @@ if (_hfgReg) _hfgReg.addEventListener("click", async function() {
 var _hfgList = document.getElementById("hub-filament-go-list");
 if (_hfgList) _hfgList.addEventListener("click", async function() {
   showLoading(); await fetchFilaments({ withPhoto: true }); filamentsHubActive(); renderFilamentsList(); hideLoading(); showSection("sec-filaments-list");
+});
+
+async function goToFilamentUsage() {
+  showLoading(); await fetchFilaments({ withPhoto: false }); await fetchProducts(); filamentsHubActive(); prepFilamentUsageForm(); hideLoading(); showSection("sec-filament-usage");
+}
+var _hfgUsage = document.getElementById("hub-filament-go-usage");
+if (_hfgUsage) _hfgUsage.addEventListener("click", goToFilamentUsage);
+var _dashUsage = document.getElementById("dash-shortcut-usage");
+if (_dashUsage) _dashUsage.addEventListener("click", goToFilamentUsage);
+var _dashOrders = document.getElementById("dash-shortcut-orders");
+if (_dashOrders) _dashOrders.addEventListener("click", async function() {
+  showLoading(); await fetchFilaments(); await fetchOrders(); await fetchOrderItems();
+  hubNavActive(); prepOrderForm(); renderOrders(); hideLoading(); showSection("sec-orders");
 });
 
 // -- Auth --------------------------------------------------------------------
@@ -305,10 +319,25 @@ async function signOut() {
   showAuth();
 }
 
+// -- Unsaved form guard -------------------------------------------------------
+function _hasUnsavedForm() {
+  var activeSec = document.querySelector(".section:not(.hidden)");
+  if (!activeSec) return false;
+  var inputs = activeSec.querySelectorAll("input:not([type='hidden']):not([type='file']):not([type='search']):not([type='checkbox']), textarea");
+  for (var i = 0; i < inputs.length; i++) {
+    var el = inputs[i];
+    // skip inputs inside hidden wrappers (e.g. product-form-wrap when collapsed)
+    if (el.closest('.hidden')) continue;
+    if ((el.value || "").trim() !== "") return true;
+  }
+  return false;
+}
+
 // -- Navigation ---------------------------------------------------------------
 if (appNav) {
   appNav.querySelectorAll("button[data-sec]").forEach(function(btn) {
     btn.addEventListener("click", async function() {
+      if (_hasUnsavedForm() && !confirm("Há dados não salvos no formulário atual. Deseja sair mesmo assim?")) return;
       appNav.querySelectorAll("button[data-sec]").forEach(function(b) { b.classList.remove("active"); });
       btn.classList.add("active");
       var secId = btn.dataset.sec;
@@ -626,7 +655,7 @@ function renderFilamentsList() {
       if (u) { img.src = u; img.onclick = function() { resolveAllPhotoUrls(fPhoto, fBucket).then(function(urls) { openLightbox(urls, 0); }); }; }
     }).catch(function() {});
     var info = document.createElement("div"); info.className = "item-info clickable"; info.title = "Clique para editar";
-    info.innerHTML = "<div class='item-info-inner'><strong>" + f.name + "</strong><div class='muted'>" + f.color + " — " + f.manufacturer + "</div></div>";
+    info.innerHTML = "<div class='item-info-inner'><strong>" + f.name + "</strong><div class='muted'>" + f.color + " — " + f.manufacturer + "</div>" + (isLow ? "<span style='font-size:11px;color:var(--danger);font-weight:600;margin-top:2px;display:block'>⚠ Estoque baixo</span>" : "") + "</div>";
     var fEdit = f; info.onclick = function() { openFilamentEdit(fEdit); };
     var acts = document.createElement("div"); acts.className = "item-actions";
     var badge = document.createElement("span"); badge.className = "qty-badge" + (isLow ? " qty-badge-low" : ""); badge.id = "badge-" + (f.id || f.name); badge.textContent = (f.quantity || 0) + " g";
@@ -649,6 +678,121 @@ function renderFilamentsList() {
     el.appendChild(div);
   });
 }
+
+// -- Filament Usage (build tracking) -------------------------------------
+function prepFilamentUsageForm() {
+  // Populate product datalist (only products without any sales)
+  var dl = document.getElementById("fu-product-list"); if (!dl) return;
+  dl.innerHTML = "";
+  var soldNames = new Set((localDB.sales || []).map(function(s) { return s.product_name; }));
+  (localDB.products || []).forEach(function(p) {
+    if (soldNames.has(p.name)) return; // locked — has sales
+    var opt = document.createElement("option"); opt.value = p.name; dl.appendChild(opt);
+  });
+  // Populate filament select
+  var sel = document.getElementById("fu-filament-sel"); if (!sel) return;
+  sel.innerHTML = "<option value=''>Escolha o filamento\u2026</option>";
+  localDB.filaments.slice().sort(function(a, b) {
+    var n = (a.name||"").localeCompare(b.name||"", "pt-BR", {sensitivity:"base"});
+    return n !== 0 ? n : (a.color||"").localeCompare(b.color||"", "pt-BR", {sensitivity:"base"});
+  }).forEach(function(f) {
+    var o = document.createElement("option"); o.value = f.id || f.name;
+    o.textContent = f.name + " \u2014 " + (f.color || "?") + " (" + (parseFloat(f.quantity)||0).toFixed(0) + "g disp.)";
+    sel.appendChild(o);
+  });
+  // Clear fields
+  var pn = document.getElementById("fu-product-name"); if (pn) pn.value = "";
+  var fq = document.getElementById("fu-qty"); if (fq) fq.value = "";
+  var ft = document.getElementById("fu-print-time"); if (ft) ft.value = "";
+}
+
+document.getElementById("filament-usage-form").addEventListener("submit", async function(e) {
+  e.preventDefault();
+  var submitBtn = document.getElementById("fu-submit");
+  btnLoad(submitBtn); showLoading(); await yieldUI();
+
+  var productName = (document.getElementById("fu-product-name").value || "").trim();
+  var filamentId  = document.getElementById("fu-filament-sel").value;
+  var qty         = parseFloat(document.getElementById("fu-qty").value) || 0;
+  var printTime   = parseFloat(document.getElementById("fu-print-time").value) || 0;
+
+  if (!productName || !filamentId || qty <= 0) {
+    alert("Preencha produto, filamento e quantidade.");
+    hideLoading(); btnUnload(submitBtn); return;
+  }
+
+  // Check product not locked (has a sale)
+  var soldNames = new Set((localDB.sales || []).map(function(s) { return s.product_name; }));
+  if (soldNames.has(productName)) {
+    alert("Este produto j\u00e1 possui vendas registradas. N\u00e3o \u00e9 poss\u00edvel adicionar uso a um produto conclu\u00eddo.");
+    hideLoading(); btnUnload(submitBtn); return;
+  }
+
+  var fil = localDB.filaments.find(function(f) { return f.id === filamentId || f.name === filamentId; });
+  if (!fil) { alert("Filamento n\u00e3o encontrado."); hideLoading(); btnUnload(submitBtn); return; }
+
+  // Find or create product
+  var prod = (localDB.products || []).find(function(p) { return p.name === productName; });
+
+  if (sb) {
+    // 1. Deduct stock
+    var newQty = Math.max(0, (parseFloat(fil.quantity) || 0) - qty);
+    var { error: stockErr } = await sb.from("filaments").update({ quantity: newQty }).eq("id", fil.id);
+    if (stockErr) { showError("Erro ao deduzir estoque.", stockErr); hideLoading(); btnUnload(submitBtn); return; }
+    fil.quantity = newQty;
+
+    // 2. Find or create product, merge filaments_info and print_time
+    var filInfo = [];
+    var existPrintTime = 0;
+    if (prod) {
+      try { filInfo = prod.filaments_info ? JSON.parse(prod.filaments_info) : []; } catch(ex) {}
+      existPrintTime = parseFloat(prod.print_time) || 0;
+    }
+    // Merge: if same filament_id already present, add qty; else push new entry
+    var existing = filInfo.find(function(fi) { return fi.filament_id === fil.id || fi.filament_id === filamentId; });
+    if (existing) {
+      existing.qty = (parseFloat(existing.qty) || 0) + qty;
+    } else {
+      filInfo.push({ filament_id: fil.id || filamentId, name: fil.name, color: fil.color || "", qty: qty });
+    }
+    var newPrintTime = existPrintTime + printTime;
+    var prodPayload = { name: productName, filaments_info: JSON.stringify(filInfo), print_time: newPrintTime || null };
+
+    if (prod) {
+      var { error: updErr } = await sb.from("products").update(prodPayload).eq("id", prod.id);
+      if (updErr) { showError("Erro ao atualizar produto.", updErr); }
+      else { prod.filaments_info = prodPayload.filaments_info; prod.print_time = prodPayload.print_time; }
+    } else {
+      prodPayload.price = 0;
+      var { data: newProd, error: insErr } = await sb.from("products").insert(prodPayload).select().single();
+      if (insErr) { showError("Erro ao criar produto.", insErr); hideLoading(); btnUnload(submitBtn); return; }
+      localDB.products.push(newProd);
+    }
+    await fetchFilaments();
+    await fetchProducts();
+  } else {
+    // Local fallback
+    fil.quantity = Math.max(0, (parseFloat(fil.quantity) || 0) - qty);
+    if (!prod) {
+      prod = { id: "local-" + Date.now(), name: productName, price: 0, filaments_info: null, print_time: null };
+      localDB.products.push(prod);
+    }
+    var fi2 = []; try { fi2 = prod.filaments_info ? JSON.parse(prod.filaments_info) : []; } catch(ex) {}
+    var ex2 = fi2.find(function(fi) { return fi.filament_id === filamentId; });
+    if (ex2) { ex2.qty = (parseFloat(ex2.qty)||0) + qty; } else { fi2.push({ filament_id: filamentId, name: fil.name, color: fil.color||"", qty: qty }); }
+    prod.filaments_info = JSON.stringify(fi2);
+    prod.print_time = (parseFloat(prod.print_time)||0) + printTime || null;
+    localDB.save();
+  }
+
+  hideLoading(); btnUnload(submitBtn);
+  var summary = fil.name + " \u2014 " + qty + "g" + (printTime ? " / " + printTime + "h" : "") + " adicionado(s) a \"" + productName + "\".";
+  alert("Uso registrado!\n" + summary);
+  prepFilamentUsageForm();
+});
+
+var _fuCancel = document.getElementById("fu-cancel");
+if (_fuCancel) _fuCancel.addEventListener("click", function() { goBack(); });
 
 // -- Filament edit modal --------------------------------------------------
 var _editFilId = null;
@@ -817,7 +961,10 @@ function addUsageRow() {
 
   var placeholder = document.createElement("option"); placeholder.value = ""; placeholder.text = "Escolha filamento"; sel.appendChild(placeholder);
   var seen = new Set();
-  localDB.filaments.forEach(function(f, i) {
+  localDB.filaments.slice().sort(function(a, b) {
+    var n = (a.name || "").localeCompare(b.name || "", "pt-BR", {sensitivity: "base"});
+    return n !== 0 ? n : (a.color || "").localeCompare(b.color || "", "pt-BR", {sensitivity: "base"});
+  }).forEach(function(f, i) {
     var key = f.id || f.name || String(i);
     if (seen.has(key)) return; seen.add(key);
     var o = document.createElement("option");
@@ -873,6 +1020,7 @@ document.getElementById("sale-form").addEventListener("submit", async function(e
     if (s && s.value && q && q.value) usages.push({ filament_id: s.value, qty: parseFloat(q.value) || 0 });
   });
   if (!usages.length) { hideLoading(); btnUnload(submitBtn); alert("Selecione pelo menos um filamento."); return; }
+  var noDeduct = document.getElementById("sale-no-deduct") && document.getElementById("sale-no-deduct").checked;
 
   if (sb) {
     var ins = await sb.from("sales").insert({ product_name: product_name, price: price, notes: notes, customer_id: saleCustomerId, created_at: new Date().toISOString() }).select().single();
@@ -896,9 +1044,11 @@ document.getElementById("sale-form").addEventListener("submit", async function(e
       var fil = localDB.filaments.find(function(f) { return f.id === u.filament_id; });
       if (fil && fil.id) {
         await sb.from("sale_items").insert({ sale_id: saleData.id, filament_id: fil.id, qty_used: u.qty });
-        var newQty = Math.max(0, (parseFloat(fil.quantity) || 0) - u.qty);
-        await sb.from("filaments").update({ quantity: newQty }).eq("id", fil.id);
-        fil.quantity = newQty;
+        if (!noDeduct) {
+          var newQty = Math.max(0, (parseFloat(fil.quantity) || 0) - u.qty);
+          await sb.from("filaments").update({ quantity: newQty }).eq("id", fil.id);
+          fil.quantity = newQty;
+        }
       }
     }
 
@@ -916,7 +1066,9 @@ document.getElementById("sale-form").addEventListener("submit", async function(e
   } else {
     localDB.sales.push({ product_name: product_name, price: price, notes: notes, created_at: new Date().toISOString(), usages: usages });
     if (!localDB.products.find(function(p) { return p.name === product_name; })) localDB.products.push({ name: product_name, price: price });
-    usages.forEach(function(u) { var f = localDB.filaments.find(function(x) { return x.id === u.filament_id || x.name === u.filament_id; }); if (f) f.quantity = Math.max(0, (f.quantity || 0) - u.qty); });
+    if (!noDeduct) {
+      usages.forEach(function(u) { var f = localDB.filaments.find(function(x) { return x.id === u.filament_id || x.name === u.filament_id; }); if (f) f.quantity = Math.max(0, (f.quantity || 0) - u.qty); });
+    }
     localDB.save();
   }
 
@@ -925,6 +1077,14 @@ document.getElementById("sale-form").addEventListener("submit", async function(e
   hideLoading();
   btnUnload(submitBtn);
   alert("Venda registrada!");
+});
+
+var _saleCancelBtn = document.getElementById("sale-form-cancel");
+if (_saleCancelBtn) _saleCancelBtn.addEventListener("click", function() {
+  document.getElementById("sale-form").reset();
+  usageItems.innerHTML = ""; addUsageRow();
+  var snf = document.getElementById("sale-new-customer-fields"); if (snf) snf.classList.add("hidden");
+  goBack();
 });
 
 document.getElementById("save-as-order").onclick = async function() {
@@ -990,7 +1150,9 @@ function renderSales() {
       }
       d.appendChild(img);
       var info = document.createElement("div"); info.className = "item-info";
-      info.innerHTML = "<strong>" + s.product_name + "</strong><div class='muted'>R$ " + parseFloat(s.price).toFixed(2) + " &middot; " + new Date(s.created_at).toLocaleString() + "</div>" + (s.notes ? "<div class='muted'>" + s.notes + "</div>" : "");
+      var sCust = s.customer_id ? (localDB.customers || []).find(function(c) { return c.id === s.customer_id; }) : null;
+      var custHtml = sCust ? "<div class='muted' style='font-size:12px;margin-top:2px'>👤 " + sCust.name + (sCust.contact ? " &middot; " + sCust.contact : "") + "</div>" : "";
+      info.innerHTML = "<strong>" + s.product_name + "</strong><div class='muted'>R$ " + parseFloat(s.price).toFixed(2) + " &middot; " + new Date(s.created_at).toLocaleString() + "</div>" + custHtml + (s.notes ? "<div class='muted'>" + s.notes + "</div>" : "");
       var acts = document.createElement("div"); acts.className = "item-actions";
       var del = document.createElement("button"); del.textContent = "Apagar";
       var sCopy = s;
@@ -1004,7 +1166,7 @@ function renderSales() {
   } else {
     listEl.style.display = "none"; tableEl.style.display = "block";
     var tbl = document.createElement("table"); tbl.style.cssText = "width:100%;border-collapse:collapse";
-    tbl.innerHTML = "<thead><tr><th></th><th>Data</th><th>Produto</th><th>Preço</th><th>Obs.</th><th>Ações</th></tr></thead>";
+    tbl.innerHTML = "<thead><tr><th></th><th>Data</th><th>Produto</th><th>Preço</th><th>Cliente</th><th>Obs.</th><th>Ações</th></tr></thead>";
     var tbody = document.createElement("tbody");
     rows.forEach(function(s) {
       var tr = document.createElement("tr"); tr.style.borderBottom = "1px solid #333";
@@ -1018,7 +1180,8 @@ function renderSales() {
       }
       tdPhoto.appendChild(tImg); tr.appendChild(tdPhoto);
       // text cells
-      [[new Date(s.created_at).toLocaleString(), s.product_name, "R$ " + s.price, s.notes || ""]].forEach(function(arr) {
+      var tCust = s.customer_id ? (localDB.customers || []).find(function(c) { return c.id === s.customer_id; }) : null;
+      [[new Date(s.created_at).toLocaleString(), s.product_name, "R$ " + s.price, tCust ? tCust.name : "—", s.notes || ""]].forEach(function(arr) {
         arr.forEach(function(text) { var td = document.createElement("td"); td.textContent = text; tr.appendChild(td); });
       });
       var td = document.createElement("td");
@@ -1054,6 +1217,19 @@ async function reuseSale(sale) {
   document.querySelector("[name='product_name']").value = sale.product_name || "";
   document.querySelector("[name='price']").value = sale.price || "";
   var notesEl = document.querySelector("[name='notes']"); if (notesEl) notesEl.value = sale.notes || "";
+  // Re-populate filaments from sale_items
+  var saleItems = (localDB.sale_items || []).filter(function(i) { return i.sale_id === sale.id; });
+  if (saleItems.length) {
+    usageItems.innerHTML = "";
+    saleItems.forEach(function(si) {
+      addUsageRow();
+      var lastRow = usageItems.lastElementChild;
+      var s = lastRow.querySelector("select"); var q = lastRow.querySelector("input");
+      if (s) s.value = si.filament_id || "";
+      if (q) q.value = si.qty_used || si.qty || "";
+    });
+    addUsageRow(); updateDelVisibility();
+  }
   hideLoading();
 }
 
@@ -1082,7 +1258,9 @@ function renderProducts() {
       var filArr = []; try { filArr = JSON.parse(p.filaments_info); } catch(e) {}
       if (filArr.length) filChipsHtml = "<div class='fil-chips'>" + filArr.map(function(f) { return "<span class='fil-chip'>" + (f.color || f.name || "") + ": " + (f.qty || 0) + "g</span>"; }).join("") + "</div>";
     }
-    info.innerHTML = "<strong>" + p.name + "</strong><div class='muted'>R$ " + parseFloat(p.price || 0).toFixed(2) + "</div>" + filChipsHtml;
+    var hasSale = (localDB.sales || []).some(function(s) { return s.product_name === p.name; });
+    var underConstructionBadge = (!hasSale && p.filaments_info) ? "<span class='badge-construction'>\uD83D\uDD27 Em constru\u00e7\u00e3o</span>" : "";
+    info.innerHTML = "<strong>" + p.name + "</strong>" + underConstructionBadge + "<div class='muted'>R$ " + parseFloat(p.price || 0).toFixed(2) + "</div>" + filChipsHtml;
     var acts = document.createElement("div"); acts.className = "item-actions";
     var pCopy = p;
 
@@ -1239,12 +1417,13 @@ function addProductUsageRow() {
 
 function computeSuggestedPrice() {
   var totalMat = 0;
+  var fallbackCost = appSettings.matCostPerKg || DEFAULT_MAT_COST_PER_KG;
   document.querySelectorAll("#product-usage-items .usage-row").forEach(function(row) {
     var s = row.querySelector("select"); var q = row.querySelector("input[type='number']");
     if (!s || !s.value || !q || !q.value) return;
     var fil = localDB.filaments.find(function(f){ return f.id===s.value || f.name===s.value; }) || {};
-    var pricePerKg = fil.price_per_kg || fil.cost_per_kg || fil.cost || DEFAULT_MAT_COST_PER_KG;
-    totalMat += (parseFloat(q.value)||0) / 1000 * (parseFloat(pricePerKg)||DEFAULT_MAT_COST_PER_KG);
+    var pricePerKg = fil.price_per_kg || fil.cost_per_kg || fil.cost || fallbackCost;
+    totalMat += (parseFloat(q.value)||0) / 1000 * (parseFloat(pricePerKg)||fallbackCost);
   });
   var ptEl = document.querySelector("[name='prod_print_time']");
   var pt = ptEl && ptEl.value ? parseFloat(ptEl.value)||0 : 0;
@@ -1262,12 +1441,13 @@ function computeSuggestedPrice() {
 
 function computeSuggestedPriceForEdit() {
   var totalMat = 0;
+  var fallbackCost = appSettings.matCostPerKg || DEFAULT_MAT_COST_PER_KG;
   document.querySelectorAll("#edit-prod-usage-items .usage-row").forEach(function(row) {
     var s = row.querySelector("select"); var q = row.querySelector("input[type='number']");
     if (!s || !s.value || !q || !q.value) return;
     var fil = localDB.filaments.find(function(f){ return f.id===s.value || f.name===s.value; }) || {};
-    var pricePerKg = fil.price_per_kg || fil.cost_per_kg || fil.cost || DEFAULT_MAT_COST_PER_KG;
-    totalMat += (parseFloat(q.value)||0) / 1000 * (parseFloat(pricePerKg)||DEFAULT_MAT_COST_PER_KG);
+    var pricePerKg = fil.price_per_kg || fil.cost_per_kg || fil.cost || fallbackCost;
+    totalMat += (parseFloat(q.value)||0) / 1000 * (parseFloat(pricePerKg)||fallbackCost);
   });
   var ptEl = document.getElementById("edit-prod-print-time");
   var pt = ptEl && ptEl.value ? parseFloat(ptEl.value)||0 : 0;
@@ -1347,6 +1527,17 @@ document.getElementById("product-form-toggle").addEventListener("click", functio
   if (!nowHidden && !document.getElementById("product-usage-items").children.length) addProductUsageRow();
   // update suggestion when opening
   setTimeout(function(){ updateProductTotalGrams(); }, 20);
+});
+
+var _prodFormCancel = document.getElementById("product-form-cancel");
+if (_prodFormCancel) _prodFormCancel.addEventListener("click", function() {
+  document.getElementById("product-form").reset();
+  document.getElementById("product-usage-items").innerHTML = "";
+  addProductUsageRow();
+  var ps = document.getElementById("product-price-suggestion"); if (ps) ps.textContent = "Sugestão: R$ 0,00";
+  var pgs = document.getElementById("product-total-grams"); if (pgs) pgs.textContent = "Total utilizado: 0 g";
+  document.getElementById("product-form-wrap").classList.add("hidden");
+  document.getElementById("product-form-toggle").textContent = "+ Cadastrar produto";
 });
 
 document.getElementById("product-form").addEventListener("submit", async function(e) {
@@ -1489,11 +1680,15 @@ if (settingsForm) {
 var adminRefresh = document.getElementById('admin-refresh'); if (adminRefresh) adminRefresh.addEventListener('click', async function(){ showLoading(); await refreshAll(); hideLoading(); alert('Refresh concluído'); });
 var adminClear = document.getElementById('admin-clear-local'); if (adminClear) adminClear.addEventListener('click', function(){ if(confirm('Limpar cache local (localStorage)?')){ localStorage.clear(); alert('localStorage limpo — recarregue a página.'); } });
 
-// Wire multiplier inputs to recalculate dynamically
+// Wire multiplier and print time inputs to recalculate dynamically
 var prodMultEl = document.querySelector("[name='prod_multiplier']");
 if (prodMultEl) prodMultEl.addEventListener('input', function(){ updateProductTotalGrams(); });
+var prodPrintTimeEl = document.querySelector("[name='prod_print_time']");
+if (prodPrintTimeEl) prodPrintTimeEl.addEventListener('input', function(){ updateProductTotalGrams(); });
 var editProdMultEl = document.getElementById('edit-prod-multiplier');
 if (editProdMultEl) editProdMultEl.addEventListener('input', function(){ updateEditProductTotalGrams(); });
+var editProdPrintTimeEl = document.getElementById('edit-prod-print-time');
+if (editProdPrintTimeEl) editProdPrintTimeEl.addEventListener('input', function(){ updateEditProductTotalGrams(); });
 
 // Apply suggestion buttons
 var applyBtn = document.getElementById("apply-price-suggestion"); if (applyBtn) applyBtn.addEventListener("click", function(){
@@ -1583,11 +1778,56 @@ function renderDashboard() {
 }
 
 // -- Orders (Encomendas) ---------------------------------------------------
+function computeOrderPrice() {
+  var multEl = document.getElementById("order-multiplier");
+  var markupEl = document.getElementById("order-markup");
+  var ptEl = document.getElementById("order-print-time");
+  var suggEl = document.getElementById("order-price-suggestion");
+  if (!suggEl) return;
+  var mult = parseFloat((multEl && multEl.value) || 0) || appSettings.defaultMultiplier || 1;
+  var markupPct = parseFloat((markupEl && markupEl.value !== "") ? markupEl.value : (appSettings.margin * 100)) || 0;
+  var pt = parseFloat((ptEl && ptEl.value) || 0) || 0;
+  var fallbackCost = appSettings.matCostPerKg || DEFAULT_MAT_COST_PER_KG;
+  var container = document.getElementById("order-usage-items");
+  var totalMat = 0;
+  if (container) {
+    container.querySelectorAll("div.usage-row").forEach(function(r) {
+      var s = r.querySelector("select"); var q = r.querySelector("input[type='number']");
+      if (s && s.value && q && q.value) {
+        var fil = localDB.filaments.find(function(f) { return String(f.id) === String(s.value); });
+        var costPerKg = fil ? (fallbackCost) : fallbackCost;
+        totalMat += (parseFloat(q.value) || 0) * costPerKg / 1000;
+      }
+    });
+  }
+  var base = (totalMat * mult) + (pt * (appSettings.hourlyRate || DEFAULT_HOURLY_RATE));
+  var suggested = base * (1 + markupPct / 100);
+  if (!totalMat && !pt) { suggEl.textContent = ""; return; }
+  suggEl.innerHTML = "💡 Sugestão: <strong>R$ " + suggested.toFixed(2).replace(".", ",") + "</strong> &mdash; <button type='button' id='order-use-suggestion' style='font-size:12px;padding:2px 8px;border-radius:8px;border:1px solid var(--a1);background:transparent;color:var(--a1);cursor:pointer;margin-left:4px'>Usar</button>";
+  var useBtn = document.getElementById("order-use-suggestion");
+  if (useBtn) useBtn.onclick = function() {
+    var prEl = document.querySelector("#order-form [name='price']");
+    if (prEl) { prEl.value = suggested.toFixed(2); prEl.focus(); }
+  };
+}
+
 function prepOrderForm() {
   var el = document.getElementById("order-usage-items");
   if (!el) return;
   el.innerHTML = "";
   addOrderUsageRow();
+  // Init calc defaults from appSettings
+  var multEl = document.getElementById("order-multiplier");
+  var markupEl = document.getElementById("order-markup");
+  if (multEl && !multEl.value) multEl.value = appSettings.defaultMultiplier || 1;
+  if (markupEl && !markupEl.value) markupEl.value = Math.round((appSettings.margin || 0) * 100);
+  var suggEl = document.getElementById("order-price-suggestion");
+  if (suggEl) suggEl.textContent = "";
+  // Wire calc inputs
+  ["order-multiplier", "order-markup", "order-print-time"].forEach(function(id) {
+    var inp = document.getElementById(id);
+    if (inp) { inp.oninput = computeOrderPrice; }
+  });
   // Populate customer selector
   var sel = document.getElementById("order-customer-sel");
   if (!sel) return;
@@ -1616,7 +1856,10 @@ function addOrderUsageRow() {
   var placeholder = document.createElement("option"); placeholder.value = ""; placeholder.text = "Escolha filamento";
   sel.appendChild(placeholder);
   var seen = new Set();
-  localDB.filaments.forEach(function(f, i) {
+  localDB.filaments.slice().sort(function(a, b) {
+    var n = (a.name || "").localeCompare(b.name || "", "pt-BR", {sensitivity: "base"});
+    return n !== 0 ? n : (a.color || "").localeCompare(b.color || "", "pt-BR", {sensitivity: "base"});
+  }).forEach(function(f, i) {
     var key = f.id || f.name || String(i);
     if (seen.has(key)) return; seen.add(key);
     var o = document.createElement("option");
@@ -1627,7 +1870,9 @@ function addOrderUsageRow() {
   sel.addEventListener("change", function() {
     if (sel.value && container.lastElementChild === row) addOrderUsageRow();
     updateOrderDelVisibility();
+    computeOrderPrice();
   });
+  qty.addEventListener("input", computeOrderPrice);
   row.appendChild(sel); row.appendChild(qty); row.appendChild(delBtn);
   container.appendChild(row);
   updateOrderDelVisibility();
@@ -1795,10 +2040,12 @@ function renderOrders() {
 async function completeOrder(order, items) {
   showLoading(); await yieldUI();
   if (sb) {
-    var ins = await sb.from("sales").insert({
+    var _salePayload = {
       product_name: order.product_name, price: order.price,
       notes: order.notes || "", created_at: new Date().toISOString()
-    }).select().single();
+    };
+    if (order.customer_id) _salePayload.customer_id = order.customer_id;
+    var ins = await sb.from("sales").insert(_salePayload).select().single();
     if (ins.error) { showError("Erro ao criar venda.", ins.error); hideLoading(); return; }
     var saleId = ins.data.id;
     for (var i = 0; i < items.length; i++) {
@@ -1863,7 +2110,10 @@ function renderCustomers() {
   rows.forEach(function(customer) {
     var pendingOrders = (localDB.orders || []).filter(function(o) { return o.customer_id === customer.id && o.status === "pendente"; });
     var totalOrders   = (localDB.orders || []).filter(function(o) { return o.customer_id === customer.id; });
-    var totalValue    = totalOrders.reduce(function(s,o){return s+(parseFloat(o.price)||0);},0);
+    var totalSales    = (localDB.sales  || []).filter(function(s) { return s.customer_id === customer.id; });
+    var totalValue    = totalOrders.reduce(function(s,o){return s+(parseFloat(o.price)||0);},0)
+                      + totalSales.reduce(function(s,v){return s+(parseFloat(v.price)||0);},0);
+    var totalCount    = totalOrders.length + totalSales.length;
     var div = document.createElement("div"); div.className = "item customer-item";
     var info = document.createElement("div"); info.className = "item-info";
     var contactHtml = "";
@@ -1879,7 +2129,7 @@ function renderCustomers() {
     info.innerHTML = "<strong>" + customer.name + "</strong>" +
       (contactHtml ? "<div class='muted' style='margin-top:3px'>" + contactHtml + "</div>" : "") +
       "<div style='margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap'>" + badge +
-      "<span class='muted' style='font-size:12px'>" + totalOrders.length + " pedido" + (totalOrders.length!==1?"s":"") +
+      "<span class='muted' style='font-size:12px'>" + totalCount + " pedido" + (totalCount!==1?"s":"") +
       (totalValue>0?" &middot; R$ "+totalValue.toFixed(2):"") + "</span></div>";
     if (pendingOrders.length) {
       var ordHtml = "<div class='cust-orders'>";
@@ -1890,6 +2140,14 @@ function renderCustomers() {
     if (customer.notes) info.innerHTML += "<div class='muted' style='font-size:12px;margin-top:4px'>" + customer.notes + "</div>";
     var acts = document.createElement("div"); acts.className = "item-actions";
     var cCopy = customer;
+    var verVendasBtn = document.createElement("button"); verVendasBtn.textContent = "Ver vendas";
+    verVendasBtn.onclick = function() {
+      var searchEl = document.getElementById("sales-search");
+      if (searchEl) { searchEl.value = cCopy.name; }
+      appNav.querySelectorAll("button[data-sec]").forEach(function(b){ b.classList.remove("active"); });
+      var sb2 = appNav ? appNav.querySelector("[data-sec='sec-sales-list']") : null; if (sb2) sb2.classList.add("active");
+      showSection("sec-sales-list"); renderSales();
+    };
     var editBtn = document.createElement("button"); editBtn.textContent = "Editar";
     editBtn.onclick = function() { openCustomerEdit(cCopy); };
     var delBtn = document.createElement("button"); delBtn.innerHTML = trashIcon(); delBtn.title = "Remover cliente";
@@ -1911,6 +2169,12 @@ function renderCustomers() {
     el.appendChild(div);
   });
 }
+
+var _newCustCancelBtn = document.getElementById("new-cust-cancel");
+if (_newCustCancelBtn) _newCustCancelBtn.addEventListener("click", function() {
+  document.getElementById("new-customer-form").reset();
+  goBack();
+});
 
 document.getElementById("new-customer-form").addEventListener("submit", async function(e) {
   e.preventDefault();

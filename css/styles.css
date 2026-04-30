@@ -713,3 +713,13 @@ button[type="submit"].btn-loading::after{border-top-color:#04101e}
   color:var(--danger)!important;
   border-color:rgba(255,91,91,.3)!important;
 }
+.badge-construction{
+  display:inline-block;
+  background:rgba(245,192,10,.13);
+  color:#f5c00a;
+  border:1px solid rgba(245,192,10,.3);
+  border-radius:20px;
+  font-size:11px;font-weight:600;
+  padding:2px 8px;margin-left:6px;
+  vertical-align:middle;white-space:nowrap;
+}
