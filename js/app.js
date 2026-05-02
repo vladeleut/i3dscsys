@@ -1261,12 +1261,27 @@ async function reuseSale(sale) {
 }
 
 // -- Products render -------------------------------------------------------
+var _productSort = "name";
+var _sortBar = document.getElementById("products-sort-bar");
+if (_sortBar) _sortBar.addEventListener("click", function(e) {
+  var btn = e.target.closest("button[data-sort]"); if (!btn) return;
+  _productSort = btn.dataset.sort;
+  _sortBar.querySelectorAll("button").forEach(function(b) { b.classList.toggle("active", b === btn); });
+  renderProducts();
+});
+
 function renderProducts() {
   var el = document.getElementById("products-list"); el.innerHTML = "";
   var q = (document.getElementById("products-search").value || "").toLowerCase().trim();
   var rows = localDB.products.filter(function(p) {
     if (!q) return true;
     return (p.name||"").toLowerCase().includes(q);
+  });
+  rows.sort(function(a, b) {
+    if (_productSort === "price-asc") return (parseFloat(a.price)||0) - (parseFloat(b.price)||0);
+    if (_productSort === "price-desc") return (parseFloat(b.price)||0) - (parseFloat(a.price)||0);
+    if (_productSort === "newest") return (b.id > a.id ? 1 : b.id < a.id ? -1 : 0);
+    return (a.name||"").localeCompare(b.name||"", "pt-BR", {sensitivity:"base"});
   });
   rows.forEach(function(p) {
     var d = document.createElement("div"); d.className = "item product-item";

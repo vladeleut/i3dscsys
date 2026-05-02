@@ -249,6 +249,13 @@
     <!-- 5. Catálogo de Produtos -->
     <section id="sec-products" class="card section hidden">
       <h2>Catálogo de Produtos</h2>
+      <input id="products-search" type="search" class="search-box" placeholder="Buscar produto…">
+      <div class="view-toggle" id="products-sort-bar" style="margin-bottom:8px">
+        <button type="button" data-sort="name" class="active">A–Z</button>
+        <button type="button" data-sort="price-asc">Preço ↑</button>
+        <button type="button" data-sort="price-desc">Preço ↓</button>
+        <button type="button" data-sort="newest">Recente</button>
+      </div>
       <button id="product-form-toggle" type="button" class="btn-ghost" style="width:100%;margin-bottom:12px">+ Cadastrar produto</button>
       <div id="product-form-wrap" class="hidden" style="margin-bottom:16px">
         <form id="product-form">
