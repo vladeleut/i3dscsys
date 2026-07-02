@@ -41,3 +41,23 @@ Observações:
 - O app exige login para uso. Se não configurar Supabase, o app funciona com `localStorage` (apenas local).
 - Upload de imagens é salvo como base64 no campo `photo` (para simplificar). Se preferir, configure o Storage do Supabase e adapte `js/app.js`.
 - Fique à vontade para pedir que eu faça o commit inicial para você.
+
+## Manter Supabase acordado (cron 1x por dia)
+
+Foi adicionado um workflow em `.github/workflows/wake-supabase.yml` que roda diariamente e faz um ping no Supabase.
+
+Como configurar no GitHub:
+
+1. Vá em **Repo > Settings > Secrets and variables > Actions**.
+2. Crie os secrets:
+	- `SUPABASE_URL` = URL do projeto (ex: `https://xxxx.supabase.co`)
+	- `SUPABASE_ANON_KEY` = chave anon do projeto
+3. (Opcional) Crie `SUPABASE_PING_PATH` para mudar o endpoint padrão.
+	- Padrão atual: `/rest/v1/filaments?select=id&limit=1`
+4. Vá em **Actions > Wake Supabase Daily** e clique em **Run workflow** para testar agora.
+
+Notas:
+
+- O cron está definido para rodar 1x por dia em UTC.
+- O workflow considera sucesso qualquer resposta que não seja erro de rede (`000`) nem erro `5xx`.
+- Se seu endpoint padrão mudar, ajuste via secret `SUPABASE_PING_PATH` sem editar o código.
